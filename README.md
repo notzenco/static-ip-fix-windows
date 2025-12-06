@@ -16,7 +16,7 @@ A Windows command-line tool to configure static IP addresses and DNS-over-HTTPS 
 
 - Windows 10/11
 - Administrator privileges (for cloudflare/google modes)
-- MinGW-w64 (for building from source)
+- CMake 3.16+ and MinGW-w64 or Visual Studio (for building)
 
 ## Installation
 
@@ -26,27 +26,14 @@ Download `static-ip-fix.exe` from the [Releases](../../releases) page.
 
 ### Build from Source
 
-**Using Make:**
 ```bash
-# MinGW-w64
-make
-
-# MSVC
-make MSVC=1
+make          # Build (Release)
+make debug    # Build (Debug)
+make vs       # Build with Visual Studio
+make clean    # Clean build
 ```
 
-**Using CMake:**
-```bash
-mkdir build && cd build
-
-# MinGW
-cmake -G "MinGW Makefiles" ..
-cmake --build .
-
-# Visual Studio
-cmake -G "Visual Studio 17 2022" ..
-cmake --build . --config Release
-```
+Output: `bin/static-ip-fix.exe`
 
 ## Usage
 
