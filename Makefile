@@ -1,4 +1,4 @@
-# Makefile for static-ip-fix (formerly dnsconfig_safe)
+# Makefile for static-ip-fix
 # Supports:
 #   - MinGW-w64 + gcc + GNU make  (default)
 #   - MSVC + cl via GNU make       (invoke with: make MSVC=1)
@@ -10,7 +10,7 @@ SRCDIR  = src
 OBJDIR  = obj
 BINDIR  = bin
 
-# Renamed binary
+# Binary name
 TARGET  = $(BINDIR)/static-ip-fix.exe
 
 SRC     = $(SRCDIR)/main.c
@@ -25,7 +25,7 @@ all: $(TARGET)
 ifdef MSVC
 CC      = cl
 CFLAGS  = /W4 /DUNICODE /D_UNICODE /O2 /nologo
-LDFLAGS = /link iphlpapi.lib advapi32.lib
+LDFLAGS = /link iphlpapi.lib advapi32.lib ws2_32.lib
 
 OBJ     = $(OBJDIR)/main.obj
 
@@ -53,7 +53,7 @@ else
 # ============================================================
 CC      = gcc
 CFLAGS  = -Wall -Wextra -DUNICODE -D_UNICODE -O2 -municode
-LDFLAGS = -municode -liphlpapi -ladvapi32
+LDFLAGS = -municode -liphlpapi -ladvapi32 -lws2_32
 
 OBJ     = $(OBJDIR)/main.o
 
