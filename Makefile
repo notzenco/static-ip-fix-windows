@@ -4,36 +4,42 @@
 #   - MSVC + cl via GNU make       (invoke with: make MSVC=1)
 
 # -------------------------------
-# Directories and shared vars
+# Directories
 # -------------------------------
 SRCDIR  = src
 OBJDIR  = obj
 BINDIR  = bin
 
-# Binary name
+# -------------------------------
+# Target
+# -------------------------------
 TARGET  = $(BINDIR)/static-ip-fix.exe
 
-SRC     = $(SRCDIR)/main.c
+# -------------------------------
+# Auto-detect source files
+# -------------------------------
+SRCS    = $(wildcard $(SRCDIR)/*.c)
 
 .PHONY: all clean
 
 all: $(TARGET)
 
 # ============================================================
-#               MSVC BUILD (must run: make MSVC=1)
+#               MSVC BUILD (make MSVC=1)
 # ============================================================
 ifdef MSVC
+
 CC      = cl
-CFLAGS  = /W4 /DUNICODE /D_UNICODE /O2 /nologo
+CFLAGS  = /W4 /DUNICODE /D_UNICODE /O2 /nologo /I$(SRCDIR)
 LDFLAGS = /link iphlpapi.lib advapi32.lib ws2_32.lib
 
-OBJ     = $(OBJDIR)/main.obj
+OBJS    = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.obj,$(SRCS))
 
-$(TARGET): $(OBJ) | $(BINDIR)
-	$(CC) $(CFLAGS) $(OBJ) /Fe:$(TARGET) $(LDFLAGS)
+$(TARGET): $(OBJS) | $(BINDIR)
+	$(CC) $(CFLAGS) $(OBJS) /Fe:$(TARGET) $(LDFLAGS)
 
-$(OBJ): $(SRC) | $(OBJDIR)
-	$(CC) $(CFLAGS) /c $(SRC) /Fo:$(OBJ)
+$(OBJDIR)/%.obj: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) /c $< /Fo:$@
 
 $(OBJDIR):
 	-mkdir $(OBJDIR)
@@ -49,28 +55,32 @@ clean:
 
 else
 # ============================================================
-#                 MINGW + GCC (DEFAULT)
+#               MINGW + GCC (DEFAULT)
 # ============================================================
+
 CC      = gcc
-CFLAGS  = -Wall -Wextra -DUNICODE -D_UNICODE -O2 -municode
+CFLAGS  = -Wall -Wextra -DUNICODE -D_UNICODE -O2 -municode -I$(SRCDIR) -MMD -MP
 LDFLAGS = -municode -liphlpapi -ladvapi32 -lws2_32
 
-OBJ     = $(OBJDIR)/main.o
+OBJS    = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
+DEPS    = $(OBJS:.o=.d)
 
-$(TARGET): $(OBJ) | $(BINDIR)
-	$(CC) $(OBJ) -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(OBJS) | $(BINDIR)
+	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
-$(OBJ): $(SRC) | $(OBJDIR)
-	$(CC) $(CFLAGS) -c $(SRC) -o $(OBJ)
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR):
-	-mkdir $(OBJDIR) 2>nul || true
+	@mkdir -p $(OBJDIR) 2>/dev/null || mkdir $(OBJDIR) 2>nul || true
 
 $(BINDIR):
-	-mkdir $(BINDIR) 2>nul || true
+	@mkdir -p $(BINDIR) 2>/dev/null || mkdir $(BINDIR) 2>nul || true
 
 clean:
-	-rmdir /S /Q $(OBJDIR) 2>nul || true
-	-rmdir /S /Q $(BINDIR) 2>nul || true
+	rm -rf $(OBJDIR) $(BINDIR) 2>/dev/null || (rmdir /S /Q $(OBJDIR) 2>nul & rmdir /S /Q $(BINDIR) 2>nul) || true
+
+# Include auto-generated dependencies
+-include $(DEPS)
 
 endif

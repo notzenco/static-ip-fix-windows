@@ -1,6 +1,9 @@
 # Build output
 obj/
 bin/
+build/
+CMakeCache.txt
+CMakeFiles/
 
 # Personal config (use static-ip-fix.example.ini as template)
 static-ip-fix.ini

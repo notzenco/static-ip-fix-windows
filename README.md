@@ -26,12 +26,26 @@ Download `static-ip-fix.exe` from the [Releases](../../releases) page.
 
 ### Build from Source
 
+**Using Make:**
 ```bash
-# Using MinGW-w64
+# MinGW-w64
 make
 
-# Using MSVC
+# MSVC
 make MSVC=1
+```
+
+**Using CMake:**
+```bash
+mkdir build && cd build
+
+# MinGW
+cmake -G "MinGW Makefiles" ..
+cmake --build .
+
+# Visual Studio
+cmake -G "Visual Studio 17 2022" ..
+cmake --build . --config Release
 ```
 
 ## Usage
