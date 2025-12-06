@@ -860,7 +860,7 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
     PROCESS_INFORMATION pi;
     wchar_t cmdline[CMD_BUFFER_SIZE];
     char buffer[4096];
-    DWORD bytesRead;
+    DWORD bytesRead, totalRead;
 
     StringCchCopyW(info->address, MAX_ADDR_LEN, server);
     info->has_template = 0;
@@ -898,34 +898,106 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
 
     CloseHandle(hWritePipe);
 
+    /* Read all output in a loop */
     ZeroMemory(buffer, sizeof(buffer));
-    if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
-        buffer[bytesRead] = '\0';
-
-        if (strstr(buffer, "Encryption settings") != NULL ||
-            strstr(buffer, "DNS-over-HTTPS template") != NULL ||
-            strstr(buffer, "dohtemplate") != NULL) {
-            info->has_template = 1;
+    totalRead = 0;
+    while (totalRead < sizeof(buffer) - 1) {
+        if (!ReadFile(hReadPipe, buffer + totalRead,
+                     (DWORD)(sizeof(buffer) - 1 - totalRead), &bytesRead, NULL) || bytesRead == 0) {
+            break;
         }
-
-        if (strstr(buffer, "Auto-upgrade") != NULL) {
-            if (strstr(buffer, "yes") != NULL || strstr(buffer, "Yes") != NULL) {
-                info->autoupgrade = 1;
-            }
-        }
-
-        if (strstr(buffer, "UDP-fallback") != NULL || strstr(buffer, "udpfallback") != NULL) {
-            if (strstr(buffer, "no") != NULL || strstr(buffer, "No") != NULL) {
-                info->udpfallback = 0;
-            }
-        }
+        totalRead += bytesRead;
     }
+    buffer[totalRead] = '\0';
 
     WaitForSingleObject(pi.hProcess, 5000);
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(hReadPipe);
+
+    /* Parse output */
+    if (totalRead > 0) {
+        if (strstr(buffer, "Encryption settings") != NULL ||
+            strstr(buffer, "DNS-over-HTTPS template") != NULL ||
+            strstr(buffer, "dohtemplate") != NULL) {
+            info->has_template = 1;
+        }
+
+        /* Check for Auto-upgrade: yes */
+        char *auto_line = strstr(buffer, "Auto-upgrade");
+        if (auto_line) {
+            char *colon = strchr(auto_line, ':');
+            if (colon && strstr(colon, "yes")) {
+                info->autoupgrade = 1;
+            }
+        }
+
+        /* Check for UDP-fallback: no */
+        char *fallback_line = strstr(buffer, "UDP-fallback");
+        if (fallback_line) {
+            char *colon = strchr(fallback_line, ':');
+            if (colon && strstr(colon, "no")) {
+                info->udpfallback = 0;
+            }
+        }
+    }
+}
+
+/*
+ * Helper to find and extract an IPv4 address from a string
+ * Returns pointer to start of IP or NULL if not found
+ */
+static char *find_ipv4(char *str)
+{
+    char *p = str;
+    while (*p) {
+        /* Look for digit that could start an IP */
+        if (*p >= '0' && *p <= '9') {
+            /* Check if it looks like an IPv4 (has dots) */
+            char *start = p;
+            int dots = 0;
+            while ((*p >= '0' && *p <= '9') || *p == '.') {
+                if (*p == '.') dots++;
+                p++;
+            }
+            if (dots == 3) {
+                return start;
+            }
+        } else {
+            p++;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Helper to find and extract an IPv6 address from a string
+ * Returns pointer to start of IP or NULL if not found
+ */
+static char *find_ipv6(char *str)
+{
+    char *p = str;
+    while (*p) {
+        /* Look for hex digit or colon that could start IPv6 */
+        if ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') ||
+            (*p >= 'A' && *p <= 'F') || *p == ':') {
+            char *start = p;
+            int colons = 0;
+            while ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') ||
+                   (*p >= 'A' && *p <= 'F') || *p == ':') {
+                if (*p == ':') colons++;
+                p++;
+            }
+            /* IPv6 has at least 2 colons */
+            if (colons >= 2) {
+                return start;
+            }
+        } else {
+            p++;
+        }
+    }
+    return NULL;
 }
 
 static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
@@ -937,7 +1009,7 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
     PROCESS_INFORMATION pi;
     wchar_t cmdline[CMD_BUFFER_SIZE];
     char buffer[8192];
-    DWORD bytesRead;
+    DWORD bytesRead, totalRead;
 
     *ipv4_count = 0;
     *ipv6_count = 0;
@@ -969,39 +1041,46 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         CloseHandle(hWritePipe);
 
+        /* Read all output */
         ZeroMemory(buffer, sizeof(buffer));
-        if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
-            buffer[bytesRead] = '\0';
-
-            char *line = strtok(buffer, "\r\n");
-            while (line && *ipv4_count < 4) {
-                char *p = line;
-                while (*p == ' ') p++;
-
-                if (*p >= '0' && *p <= '9') {
-                    char ip[64] = {0};
-                    int i = 0;
-                    while (*p && *p != ' ' && *p != '\r' && *p != '\n' && i < 63) {
-                        ip[i++] = *p++;
-                    }
-                    ip[i] = '\0';
-
-                    if (strlen(ip) >= 7) {
-                        MultiByteToWideChar(CP_UTF8, 0, ip, -1,
-                            ipv4_servers[*ipv4_count].address, MAX_ADDR_LEN);
-                        query_doh_info(ipv4_servers[*ipv4_count].address,
-                            &ipv4_servers[*ipv4_count]);
-                        (*ipv4_count)++;
-                    }
-                }
-                line = strtok(NULL, "\r\n");
+        totalRead = 0;
+        while (totalRead < sizeof(buffer) - 1) {
+            if (!ReadFile(hReadPipe, buffer + totalRead,
+                         (DWORD)(sizeof(buffer) - 1 - totalRead), &bytesRead, NULL) || bytesRead == 0) {
+                break;
             }
+            totalRead += bytesRead;
         }
+        buffer[totalRead] = '\0';
 
         WaitForSingleObject(pi.hProcess, 5000);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         CloseHandle(hReadPipe);
+
+        /* Parse each line for IPv4 addresses */
+        char *line = strtok(buffer, "\r\n");
+        while (line && *ipv4_count < 4) {
+            char *ip_start = find_ipv4(line);
+            if (ip_start) {
+                char ip[64] = {0};
+                int i = 0;
+                while (ip_start[i] && ((ip_start[i] >= '0' && ip_start[i] <= '9') || ip_start[i] == '.') && i < 63) {
+                    ip[i] = ip_start[i];
+                    i++;
+                }
+                ip[i] = '\0';
+
+                if (strlen(ip) >= 7) {
+                    MultiByteToWideChar(CP_ACP, 0, ip, -1,
+                        ipv4_servers[*ipv4_count].address, MAX_ADDR_LEN);
+                    query_doh_info(ipv4_servers[*ipv4_count].address,
+                        &ipv4_servers[*ipv4_count]);
+                    (*ipv4_count)++;
+                }
+            }
+            line = strtok(NULL, "\r\n");
+        }
     } else {
         CloseHandle(hReadPipe);
         CloseHandle(hWritePipe);
@@ -1030,40 +1109,50 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         CloseHandle(hWritePipe);
 
+        /* Read all output */
         ZeroMemory(buffer, sizeof(buffer));
-        if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
-            buffer[bytesRead] = '\0';
-
-            char *line = strtok(buffer, "\r\n");
-            while (line && *ipv6_count < 4) {
-                char *p = line;
-                while (*p == ' ') p++;
-
-                if (((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') ||
-                     (*p >= 'A' && *p <= 'F')) && strchr(p, ':')) {
-                    char ip[64] = {0};
-                    int i = 0;
-                    while (*p && *p != ' ' && *p != '\r' && *p != '\n' && i < 63) {
-                        ip[i++] = *p++;
-                    }
-                    ip[i] = '\0';
-
-                    if (strlen(ip) >= 3 && strchr(ip, ':')) {
-                        MultiByteToWideChar(CP_UTF8, 0, ip, -1,
-                            ipv6_servers[*ipv6_count].address, MAX_ADDR_LEN);
-                        query_doh_info(ipv6_servers[*ipv6_count].address,
-                            &ipv6_servers[*ipv6_count]);
-                        (*ipv6_count)++;
-                    }
-                }
-                line = strtok(NULL, "\r\n");
+        totalRead = 0;
+        while (totalRead < sizeof(buffer) - 1) {
+            if (!ReadFile(hReadPipe, buffer + totalRead,
+                         (DWORD)(sizeof(buffer) - 1 - totalRead), &bytesRead, NULL) || bytesRead == 0) {
+                break;
             }
+            totalRead += bytesRead;
         }
+        buffer[totalRead] = '\0';
 
         WaitForSingleObject(pi.hProcess, 5000);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         CloseHandle(hReadPipe);
+
+        /* Parse each line for IPv6 addresses */
+        char *line = strtok(buffer, "\r\n");
+        while (line && *ipv6_count < 4) {
+            char *ip_start = find_ipv6(line);
+            if (ip_start) {
+                char ip[64] = {0};
+                int i = 0;
+                while (ip_start[i] && (
+                       (ip_start[i] >= '0' && ip_start[i] <= '9') ||
+                       (ip_start[i] >= 'a' && ip_start[i] <= 'f') ||
+                       (ip_start[i] >= 'A' && ip_start[i] <= 'F') ||
+                       ip_start[i] == ':') && i < 63) {
+                    ip[i] = ip_start[i];
+                    i++;
+                }
+                ip[i] = '\0';
+
+                if (strlen(ip) >= 3 && strchr(ip, ':')) {
+                    MultiByteToWideChar(CP_ACP, 0, ip, -1,
+                        ipv6_servers[*ipv6_count].address, MAX_ADDR_LEN);
+                    query_doh_info(ipv6_servers[*ipv6_count].address,
+                        &ipv6_servers[*ipv6_count]);
+                    (*ipv6_count)++;
+                }
+            }
+            line = strtok(NULL, "\r\n");
+        }
     } else {
         CloseHandle(hReadPipe);
         CloseHandle(hWritePipe);
