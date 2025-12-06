@@ -1,9 +1,9 @@
-# release.ps1 - Simple release script
-# Usage: .\scripts\release.ps1 [major|minor|patch] [-y]
+# push.ps1 - Release script
+# Usage: .\scripts\push.ps1 [patch|fix|feature] [-y]
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet('major', 'minor', 'patch')]
+    [ValidateSet('patch', 'fix', 'feature')]
     [string]$BumpType = 'patch',
     [switch]$y
 )
@@ -29,8 +29,8 @@ if ($latestTag -match 'v?(\d+)\.(\d+)\.(\d+)') {
 
 # Bump version
 switch ($BumpType) {
-    'major' { $major++; $minor = 0; $patch = 0 }
-    'minor' { $minor++; $patch = 0 }
+    'feature' { $minor++; $patch = 0 }
+    'fix' { $patch++ }
     'patch' { $patch++ }
 }
 
