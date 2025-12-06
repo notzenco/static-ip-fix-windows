@@ -21,13 +21,19 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
 
       - name: Build
-        run: make
+        run: |
+          cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          mkdir -p bin
+          cp build/bin/static-ip-fix.exe bin/
 
       - name: Run tests
-        run: make test
+        run: |
+          cmake --build build --target test_utils
+          ./build/bin/test_utils.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -50,10 +56,14 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
 
       - name: Build release
-        run: make
+        run: |
+          cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          mkdir -p bin
+          cp build/bin/static-ip-fix.exe bin/
 
       - name: Create release
         uses: softprops/action-gh-release@v1
