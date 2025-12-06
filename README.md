@@ -44,6 +44,7 @@ static-ip-fix.exe [OPTIONS] <MODE>
 MODES:
     cloudflare    Configure DNS with Cloudflare (1.1.1.1) + DoH
     google        Configure DNS with Google (8.8.8.8) + DoH
+    custom        Configure DNS with custom servers from config file
     status        Show current DNS encryption status
 
 OPTIONS:
@@ -111,9 +112,20 @@ gateway = 192.168.1.1
 address = 2001:db8::100
 prefix = 64
 gateway = fe80::1
+
+[dns]
+ipv4_servers = 1.1.1.1, 1.0.0.1
+ipv6_servers = 2606:4700:4700::1111, 2606:4700:4700::1001
+
+[doh]
+template = https://cloudflare-dns.com/dns-query
+autoupgrade = yes
+fallback = no
 ```
 
 See `static-ip-fix.example.ini` for a complete example.
+
+The `[dns]` and `[doh]` sections are used with the `custom` mode.
 
 ### Configuration Priority
 
