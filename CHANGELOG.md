@@ -1,5 +1,15 @@
 # Changelog
 
+## [Upcoming]
+
+### Bug Fixes
+- move confirmation before changelog update, add -y flag (0e34a03)
+
+### Other Changes
+- rename to push.ps1, only run CI on tags and PRs (66bfb6e)
+- cleanup (68a1fa4)
+- ghp.ps1 (6ece37a)
+
 All notable changes to this project will be documented in this file.
 
 ## [v1.0.0] - 2025-12-07
