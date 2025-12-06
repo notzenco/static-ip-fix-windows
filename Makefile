@@ -4,7 +4,7 @@
 BUILD_DIR = build
 BIN_DIR = bin
 
-.PHONY: all clean release debug vs
+.PHONY: all clean release debug vs test
 
 # Default: build with CMake
 all:
@@ -35,3 +35,9 @@ vs:
 	@cmake --build $(BUILD_DIR) --config Release
 	@cmake -E make_directory $(BIN_DIR)
 	@cmake -E copy $(BUILD_DIR)/bin/Release/static-ip-fix.exe $(BIN_DIR)/
+
+# Run tests
+test:
+	@cmake -S . -B $(BUILD_DIR) -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+	@cmake --build $(BUILD_DIR) --target test_utils
+	@$(BUILD_DIR)/bin/test_utils.exe

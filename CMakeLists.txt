@@ -55,6 +55,37 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# ============================================================================
+# TEST TARGET
+# ============================================================================
+
+enable_testing()
+
+# Test executable
+add_executable(test_utils
+    tests/test_utils.c
+    src/utils.c
+)
+
+target_include_directories(test_utils PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/tests
+)
+
+target_compile_definitions(test_utils PRIVATE
+    UNICODE
+    _UNICODE
+    _WIN32_WINNT=0x0600
+)
+
+if(MSVC)
+    target_compile_options(test_utils PRIVATE /W4)
+else()
+    target_compile_options(test_utils PRIVATE -Wall -Wextra)
+endif()
+
+add_test(NAME utils_tests COMMAND test_utils)
+
 # Install target
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION bin

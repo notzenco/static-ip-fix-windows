@@ -30,6 +30,7 @@ Download `static-ip-fix.exe` from the [Releases](../../releases) page.
 make          # Build (Release)
 make debug    # Build (Debug)
 make vs       # Build with Visual Studio
+make test     # Run tests
 make clean    # Clean build
 ```
 
