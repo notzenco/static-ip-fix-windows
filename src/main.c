@@ -97,6 +97,24 @@ int wmain(int argc, wchar_t *argv[]) {
         return dns_run_provider(&DNS_CLOUDFLARE);
     case MODE_GOOGLE:
         return dns_run_provider(&DNS_GOOGLE);
+    case MODE_CUSTOM:
+        if (!g_config.has_custom_dns) {
+            print_error(L"Custom mode requires [dns] section in config file.");
+            return 1;
+        }
+        if (g_config.doh_template[0] == L'\0') {
+            print_error(L"Custom mode requires [doh] template in config file.");
+            return 1;
+        }
+        DnsProvider custom = {
+            .name = L"Custom",
+            .ipv4_primary = g_config.dns_ipv4_primary,
+            .ipv4_secondary = g_config.dns_ipv4_secondary,
+            .ipv6_primary = g_config.dns_ipv6_primary,
+            .ipv6_secondary = g_config.dns_ipv6_secondary,
+            .doh_template = g_config.doh_template
+        };
+        return dns_run_provider(&custom);
     case MODE_STATUS:
         return status_run();
     default:

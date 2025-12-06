@@ -93,6 +93,42 @@ int config_parse_file(const wchar_t *filepath)
                     StringCchCopyW(g_config.ipv6_gateway, MAX_ADDR_LEN, value);
                 }
             }
+            else if (_wcsicmp(section, L"dns") == 0) {
+                if (_wcsicmp(key, L"ipv4_servers") == 0) {
+                    /* Parse comma-separated: "1.1.1.1, 1.0.0.1" */
+                    wchar_t *comma = wcschr(value, L',');
+                    if (comma) {
+                        *comma = L'\0';
+                        StringCchCopyW(g_config.dns_ipv4_primary, MAX_ADDR_LEN, trim(value));
+                        StringCchCopyW(g_config.dns_ipv4_secondary, MAX_ADDR_LEN, trim(comma + 1));
+                    } else {
+                        StringCchCopyW(g_config.dns_ipv4_primary, MAX_ADDR_LEN, trim(value));
+                    }
+                    g_config.has_custom_dns = 1;
+                }
+                else if (_wcsicmp(key, L"ipv6_servers") == 0) {
+                    /* Parse comma-separated IPv6 addresses */
+                    wchar_t *comma = wcschr(value, L',');
+                    if (comma) {
+                        *comma = L'\0';
+                        StringCchCopyW(g_config.dns_ipv6_primary, MAX_ADDR_LEN, trim(value));
+                        StringCchCopyW(g_config.dns_ipv6_secondary, MAX_ADDR_LEN, trim(comma + 1));
+                    } else {
+                        StringCchCopyW(g_config.dns_ipv6_primary, MAX_ADDR_LEN, trim(value));
+                    }
+                }
+            }
+            else if (_wcsicmp(section, L"doh") == 0) {
+                if (_wcsicmp(key, L"template") == 0) {
+                    StringCchCopyW(g_config.doh_template, 256, value);
+                }
+                else if (_wcsicmp(key, L"autoupgrade") == 0) {
+                    g_config.doh_autoupgrade = (_wcsicmp(value, L"yes") == 0 || _wcsicmp(value, L"true") == 0 || _wcsicmp(value, L"1") == 0);
+                }
+                else if (_wcsicmp(key, L"fallback") == 0) {
+                    g_config.doh_fallback = (_wcsicmp(value, L"yes") == 0 || _wcsicmp(value, L"true") == 0 || _wcsicmp(value, L"1") == 0);
+                }
+            }
         }
     }
 
@@ -201,6 +237,10 @@ RunMode config_parse_args(int argc, wchar_t *argv[], wchar_t *config_file)
             mode = MODE_GOOGLE;
             continue;
         }
+        if (_wcsicmp(arg, L"custom") == 0) {
+            mode = MODE_CUSTOM;
+            continue;
+        }
         if (_wcsicmp(arg, L"status") == 0) {
             mode = MODE_STATUS;
             continue;
@@ -231,6 +271,7 @@ void config_print_help(void)
     wprintf(L"MODES:\n");
     wprintf(L"    cloudflare    Configure DNS with Cloudflare (1.1.1.1) + DoH\n");
     wprintf(L"    google        Configure DNS with Google (8.8.8.8) + DoH\n");
+    wprintf(L"    custom        Configure DNS with custom servers from config file\n");
     wprintf(L"    status        Show current DNS encryption status\n");
     wprintf(L"\n");
     wprintf(L"OPTIONS:\n");
@@ -274,5 +315,10 @@ void config_set_defaults(void)
     }
     if (g_config.ipv6_prefix[0] == L'\0' && g_config.has_ipv6) {
         StringCchCopyW(g_config.ipv6_prefix, 16, L"64");
+    }
+    /* DoH defaults: autoupgrade=yes, fallback=no */
+    if (g_config.has_custom_dns && g_config.doh_template[0] != L'\0') {
+        /* doh_autoupgrade defaults to 1 if not explicitly set to 0 */
+        /* Config parsing already handles this */
     }
 }

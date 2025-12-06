@@ -25,10 +25,22 @@ typedef struct {
     wchar_t ipv6_prefix[16];
     wchar_t ipv6_gateway[MAX_ADDR_LEN];
 
+    /* DNS servers */
+    wchar_t dns_ipv4_primary[MAX_ADDR_LEN];
+    wchar_t dns_ipv4_secondary[MAX_ADDR_LEN];
+    wchar_t dns_ipv6_primary[MAX_ADDR_LEN];
+    wchar_t dns_ipv6_secondary[MAX_ADDR_LEN];
+
+    /* DoH settings */
+    wchar_t doh_template[256];
+    int doh_autoupgrade;
+    int doh_fallback;
+
     /* Flags */
     int dns_only;
     int has_ipv4;
     int has_ipv6;
+    int has_custom_dns;
 } Config;
 
 /* Global configuration instance */
@@ -44,6 +56,7 @@ typedef enum {
     MODE_LIST,
     MODE_CLOUDFLARE,
     MODE_GOOGLE,
+    MODE_CUSTOM,
     MODE_STATUS
 } RunMode;
 
