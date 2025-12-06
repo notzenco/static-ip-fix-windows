@@ -1,16 +1,17 @@
 # release.ps1 - Simple release script
-# Usage: .\scripts\release.ps1 [major|minor|patch]
+# Usage: .\scripts\release.ps1 [major|minor|patch] [-y]
 
 param(
     [Parameter(Position=0)]
     [ValidateSet('major', 'minor', 'patch')]
-    [string]$BumpType = 'patch'
+    [string]$BumpType = 'patch',
+    [switch]$y
 )
 
 $ErrorActionPreference = 'Stop'
 
 # Get latest tag
-$latestTag = git describe --tags --abbrev=0 2>$null
+$latestTag = git tag -l "v*" | Sort-Object { [version]($_ -replace '^v', '') } -Descending | Select-Object -First 1
 if (-not $latestTag) {
     $latestTag = 'v0.0.0'
     Write-Host "No existing tags found, starting from v0.0.0"
@@ -95,12 +96,21 @@ if ($other.Count -gt 0) {
 Write-Host "Changelog entry:" -ForegroundColor Green
 Write-Host $entry
 
+# Confirm before making any changes
+if (-not $y) {
+    Write-Host "`nReady to release $newVersion" -ForegroundColor Yellow
+    $confirm = Read-Host "Continue? (y/n)"
+    if ($confirm -ne 'y') {
+        Write-Host "Aborted. No changes made."
+        exit 0
+    }
+}
+
 # Update CHANGELOG.md
 $changelogPath = "CHANGELOG.md"
 if (Test-Path $changelogPath) {
     $existing = Get-Content $changelogPath -Raw
-    # Insert after header
-    if ($existing -match '^(# Changelog\s*)') {
+    if ($existing -match '^(# Changelog\s*\r?\n)') {
         $content = $Matches[1] + "`n" + $entry + "`n" + $existing.Substring($Matches[0].Length)
     } else {
         $content = "# Changelog`n`n" + $entry + "`n" + $existing
@@ -111,14 +121,6 @@ if (Test-Path $changelogPath) {
 
 Set-Content $changelogPath $content -NoNewline
 Write-Host "`nUpdated CHANGELOG.md" -ForegroundColor Green
-
-# Confirm
-Write-Host "`nReady to create tag $newVersion" -ForegroundColor Yellow
-$confirm = Read-Host "Continue? (y/n)"
-if ($confirm -ne 'y') {
-    Write-Host "Aborted. CHANGELOG.md was updated but no tag created."
-    exit 0
-}
 
 # Commit changelog and create tag
 git add CHANGELOG.md
