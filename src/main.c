@@ -1,12 +1,28 @@
 /*
  * static-ip-fix.exe
  *
- * A Windows-only tool to configure static IP addresses and DNS-over-HTTPS.
+ * A Windows tool to configure static IP addresses and DNS-over-HTTPS.
  *
  * Usage:
- *   static-ip-fix.exe cloudflare   - Configure static IP + Cloudflare DNS + DoH
- *   static-ip-fix.exe google       - Configure static IP + Google DNS + DoH
- *   static-ip-fix.exe status       - Show current DNS encryption status
+ *   static-ip-fix.exe [options] <mode>
+ *
+ * Modes:
+ *   cloudflare   - Configure DNS with Cloudflare + DoH
+ *   google       - Configure DNS with Google + DoH
+ *   status       - Show current DNS encryption status
+ *
+ * Options:
+ *   -h, --help              Show help message
+ *   -c, --config FILE       Load configuration from FILE
+ *   -l, --list-interfaces   List available network interfaces
+ *   -i, --interface NAME    Specify network interface
+ *   --dns-only              Only configure DNS (skip static IP)
+ *   --ipv4 ADDR             IPv4 address
+ *   --ipv4-mask MASK        IPv4 subnet mask
+ *   --ipv4-gateway GW       IPv4 gateway
+ *   --ipv6 ADDR             IPv6 address
+ *   --ipv6-prefix LEN       IPv6 prefix length
+ *   --ipv6-gateway GW       IPv6 gateway
  *
  * Requires Administrator privileges for cloudflare/google modes.
  *
@@ -23,28 +39,52 @@
 #include <strsafe.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 
-/* MSVC auto-linking (ignored by GCC) */
+#ifdef _MSC_VER
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32.lib")
+#endif
 
 /* ============================================================================
- * CONFIGURATION CONSTANTS
+ * CONSTANTS
  * ============================================================================ */
 
-/* Network interface name */
-static const wchar_t *INTERFACE_ALIAS = L"Ethernet";
+#define MAX_IFACE_LEN 128
+#define MAX_PATH_LEN 512
+#define MAX_ADDR_LEN 64
+#define CMD_BUFFER_SIZE 2048
+#define CONFIG_LINE_SIZE 512
 
-/* Static IPv4 configuration */
-static const wchar_t *STATIC_IPV4_ADDR    = L"192.168.20.101";
-static const wchar_t *STATIC_IPV4_MASK    = L"255.255.255.0";
-static const wchar_t *STATIC_IPV4_GATEWAY = L"192.168.20.1";
+#define DEFAULT_CONFIG_FILE L"static-ip-fix.ini"
 
-/* Static IPv6 configuration */
-static const wchar_t *STATIC_IPV6_ADDR    = L"2407:5400:621a:4f00::101";
-static const wchar_t *STATIC_IPV6_PREFIX  = L"64";
-static const wchar_t *STATIC_IPV6_GATEWAY = L"fe80::faca:59ff:fea3:5208";
+/* ============================================================================
+ * CONFIGURATION STRUCTURE
+ * ============================================================================ */
+
+typedef struct {
+    /* Interface */
+    wchar_t interface_name[MAX_IFACE_LEN];
+
+    /* IPv4 */
+    wchar_t ipv4_address[MAX_ADDR_LEN];
+    wchar_t ipv4_mask[MAX_ADDR_LEN];
+    wchar_t ipv4_gateway[MAX_ADDR_LEN];
+
+    /* IPv6 */
+    wchar_t ipv6_address[MAX_ADDR_LEN];
+    wchar_t ipv6_prefix[16];
+    wchar_t ipv6_gateway[MAX_ADDR_LEN];
+
+    /* Flags */
+    int dns_only;
+    int has_ipv4;
+    int has_ipv6;
+} Config;
+
+/* Global configuration */
+static Config g_config;
 
 /* Cloudflare DNS servers */
 static const wchar_t *CF_DNS_IPV4_1 = L"1.1.1.1";
@@ -62,64 +102,64 @@ static const wchar_t *GOOGLE_DOH_TEMPLATE = L"https://dns.google/dns-query";
 
 /* All DNS servers for rollback cleanup */
 static const wchar_t *ALL_DNS_SERVERS[] = {
-    L"1.1.1.1",
-    L"1.0.0.1",
-    L"2606:4700:4700::1111",
-    L"2606:4700:4700::1001",
-    L"8.8.8.8",
-    L"8.8.4.4",
-    L"2001:4860:4860::8888",
-    L"2001:4860:4860::8844",
+    L"1.1.1.1", L"1.0.0.1",
+    L"2606:4700:4700::1111", L"2606:4700:4700::1001",
+    L"8.8.8.8", L"8.8.4.4",
+    L"2001:4860:4860::8888", L"2001:4860:4860::8844",
     NULL
 };
-
-/* Input validation */
-#define MAX_IFACE_LEN 128
-#define CMD_BUFFER_SIZE 2048
 
 /* ============================================================================
  * UTILITY FUNCTIONS
  * ============================================================================ */
 
-/*
- * Print error message to stderr
- */
 static void print_error(const wchar_t *msg)
 {
     fwprintf(stderr, L"[ERROR] %ls\n", msg);
 }
 
-/*
- * Print info message to stdout
- */
 static void print_info(const wchar_t *msg)
 {
     wprintf(L"[INFO] %ls\n", msg);
 }
 
-/*
- * Print success message to stdout
- */
 static void print_success(const wchar_t *msg)
 {
     wprintf(L"[OK] %ls\n", msg);
 }
 
 /*
+ * Trim whitespace from both ends of a string (in place)
+ */
+static wchar_t *trim(wchar_t *str)
+{
+    wchar_t *end;
+
+    /* Trim leading */
+    while (iswspace(*str)) str++;
+
+    if (*str == L'\0') return str;
+
+    /* Trim trailing */
+    end = str + wcslen(str) - 1;
+    while (end > str && iswspace(*end)) end--;
+    end[1] = L'\0';
+
+    return str;
+}
+
+/*
  * Validate interface alias - allow only safe characters
- * Allowed: letters, digits, space, hyphen, underscore, parentheses, dot
  */
 static int validate_interface_alias(const wchar_t *alias)
 {
     size_t len = 0;
 
     if (!alias || *alias == L'\0') {
-        print_error(L"Interface alias is empty");
         return 0;
     }
 
     if (FAILED(StringCchLengthW(alias, MAX_IFACE_LEN + 1, &len)) || len > MAX_IFACE_LEN) {
-        print_error(L"Interface alias too long (max 128 chars)");
         return 0;
     }
 
@@ -131,9 +171,6 @@ static int validate_interface_alias(const wchar_t *alias)
                     c == L' ' || c == L'-' || c == L'_' ||
                     c == L'(' || c == L')' || c == L'.';
         if (!valid) {
-            wchar_t errmsg[256];
-            StringCchPrintfW(errmsg, 256, L"Invalid character in interface alias: '%lc'", c);
-            print_error(errmsg);
             return 0;
         }
     }
@@ -143,7 +180,6 @@ static int validate_interface_alias(const wchar_t *alias)
 
 /*
  * Execute a process and wait for completion
- * Returns the process exit code, or -1 on failure to launch
  */
 static int run_process(wchar_t *cmdline, int silent)
 {
@@ -154,7 +190,6 @@ static int run_process(wchar_t *cmdline, int silent)
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
 
-    /* Suppress output if silent mode */
     if (silent) {
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdInput = NULL;
@@ -164,25 +199,11 @@ static int run_process(wchar_t *cmdline, int silent)
 
     ZeroMemory(&pi, sizeof(pi));
 
-    if (!CreateProcessW(
-            NULL,           /* Use cmdline for executable */
-            cmdline,        /* Full command line */
-            NULL,           /* Process security */
-            NULL,           /* Thread security */
-            FALSE,          /* Don't inherit handles */
-            CREATE_NO_WINDOW, /* No console window */
-            NULL,           /* Use parent environment */
-            NULL,           /* Use parent directory */
-            &si,
-            &pi)) {
-        DWORD err = GetLastError();
-        wchar_t errmsg[512];
-        StringCchPrintfW(errmsg, 512, L"CreateProcessW failed (error %lu): %ls", err, cmdline);
-        print_error(errmsg);
+    if (!CreateProcessW(NULL, cmdline, NULL, NULL, FALSE,
+                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         return -1;
     }
 
-    /* Wait for process to complete */
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &exit_code);
 
@@ -192,10 +213,6 @@ static int run_process(wchar_t *cmdline, int silent)
     return (int)exit_code;
 }
 
-/*
- * Execute netsh command
- * Returns 0 on success, non-zero on failure
- */
 static int run_netsh(const wchar_t *args)
 {
     wchar_t cmdline[CMD_BUFFER_SIZE];
@@ -208,9 +225,6 @@ static int run_netsh(const wchar_t *args)
     return run_process(cmdline, 0);
 }
 
-/*
- * Execute netsh command silently (ignore errors)
- */
 static void run_netsh_silent(const wchar_t *args)
 {
     wchar_t cmdline[CMD_BUFFER_SIZE];
@@ -221,13 +235,378 @@ static void run_netsh_silent(const wchar_t *args)
 }
 
 /* ============================================================================
+ * INTERFACE LISTING
+ * ============================================================================ */
+
+static void list_interfaces(void)
+{
+    ULONG bufLen = 15000;
+    PIP_ADAPTER_ADDRESSES pAddresses = NULL;
+    PIP_ADAPTER_ADDRESSES pCurrAddr = NULL;
+    ULONG ret;
+    int count = 0;
+
+    pAddresses = (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, bufLen);
+    if (!pAddresses) {
+        print_error(L"Memory allocation failed");
+        return;
+    }
+
+    ret = GetAdaptersAddresses(AF_UNSPEC,
+        GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+        NULL, pAddresses, &bufLen);
+
+    if (ret == ERROR_BUFFER_OVERFLOW) {
+        HeapFree(GetProcessHeap(), 0, pAddresses);
+        pAddresses = (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, bufLen);
+        if (!pAddresses) {
+            print_error(L"Memory allocation failed");
+            return;
+        }
+        ret = GetAdaptersAddresses(AF_UNSPEC,
+            GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+            NULL, pAddresses, &bufLen);
+    }
+
+    if (ret != NO_ERROR) {
+        print_error(L"GetAdaptersAddresses failed");
+        HeapFree(GetProcessHeap(), 0, pAddresses);
+        return;
+    }
+
+    wprintf(L"\nAvailable network interfaces:\n");
+    wprintf(L"========================================\n\n");
+
+    pCurrAddr = pAddresses;
+    while (pCurrAddr) {
+        /* Skip loopback and tunnel adapters */
+        if (pCurrAddr->IfType != IF_TYPE_SOFTWARE_LOOPBACK &&
+            pCurrAddr->IfType != IF_TYPE_TUNNEL &&
+            pCurrAddr->OperStatus == IfOperStatusUp) {
+
+            count++;
+            wprintf(L"  [%d] %ls\n", count, pCurrAddr->FriendlyName);
+            wprintf(L"      Type: ");
+
+            switch (pCurrAddr->IfType) {
+                case IF_TYPE_ETHERNET_CSMACD:
+                    wprintf(L"Ethernet\n");
+                    break;
+                case IF_TYPE_IEEE80211:
+                    wprintf(L"Wi-Fi\n");
+                    break;
+                default:
+                    wprintf(L"Other (%lu)\n", pCurrAddr->IfType);
+            }
+
+            wprintf(L"      Status: Up\n");
+
+            /* Show IP addresses */
+            PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurrAddr->FirstUnicastAddress;
+            while (pUnicast) {
+                char ipStr[64];
+                DWORD ipStrLen = sizeof(ipStr);
+
+                if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
+                    struct sockaddr_in *sa = (struct sockaddr_in *)pUnicast->Address.lpSockaddr;
+                    inet_ntop(AF_INET, &sa->sin_addr, ipStr, ipStrLen);
+                    wprintf(L"      IPv4: %S\n", ipStr);
+                } else if (pUnicast->Address.lpSockaddr->sa_family == AF_INET6) {
+                    struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)pUnicast->Address.lpSockaddr;
+                    inet_ntop(AF_INET6, &sa6->sin6_addr, ipStr, ipStrLen);
+                    /* Skip link-local for cleaner output */
+                    if (strncmp(ipStr, "fe80:", 5) != 0) {
+                        wprintf(L"      IPv6: %S\n", ipStr);
+                    }
+                }
+                pUnicast = pUnicast->Next;
+            }
+            wprintf(L"\n");
+        }
+        pCurrAddr = pCurrAddr->Next;
+    }
+
+    if (count == 0) {
+        wprintf(L"  No active network interfaces found.\n\n");
+    }
+
+    HeapFree(GetProcessHeap(), 0, pAddresses);
+}
+
+/* ============================================================================
+ * CONFIGURATION FILE PARSER
+ * ============================================================================ */
+
+static int parse_config_file(const wchar_t *filepath)
+{
+    FILE *fp;
+    wchar_t line[CONFIG_LINE_SIZE];
+    wchar_t section[64] = L"";
+
+    if (_wfopen_s(&fp, filepath, L"r, ccs=UTF-8") != 0 || !fp) {
+        return -1;
+    }
+
+    while (fgetws(line, CONFIG_LINE_SIZE, fp)) {
+        wchar_t *trimmed = trim(line);
+
+        /* Skip empty lines and comments */
+        if (*trimmed == L'\0' || *trimmed == L';' || *trimmed == L'#') {
+            continue;
+        }
+
+        /* Section header */
+        if (*trimmed == L'[') {
+            wchar_t *end = wcschr(trimmed, L']');
+            if (end) {
+                *end = L'\0';
+                StringCchCopyW(section, 64, trimmed + 1);
+            }
+            continue;
+        }
+
+        /* Key = Value */
+        wchar_t *eq = wcschr(trimmed, L'=');
+        if (eq) {
+            *eq = L'\0';
+            wchar_t *key = trim(trimmed);
+            wchar_t *value = trim(eq + 1);
+
+            /* Remove surrounding quotes if present */
+            size_t vlen = wcslen(value);
+            if (vlen >= 2 && ((value[0] == L'"' && value[vlen-1] == L'"') ||
+                              (value[0] == L'\'' && value[vlen-1] == L'\''))) {
+                value[vlen-1] = L'\0';
+                value++;
+            }
+
+            /* Parse based on section */
+            if (_wcsicmp(section, L"interface") == 0) {
+                if (_wcsicmp(key, L"name") == 0) {
+                    StringCchCopyW(g_config.interface_name, MAX_IFACE_LEN, value);
+                }
+            }
+            else if (_wcsicmp(section, L"ipv4") == 0) {
+                if (_wcsicmp(key, L"address") == 0) {
+                    StringCchCopyW(g_config.ipv4_address, MAX_ADDR_LEN, value);
+                    g_config.has_ipv4 = 1;
+                }
+                else if (_wcsicmp(key, L"netmask") == 0 || _wcsicmp(key, L"mask") == 0) {
+                    StringCchCopyW(g_config.ipv4_mask, MAX_ADDR_LEN, value);
+                }
+                else if (_wcsicmp(key, L"gateway") == 0) {
+                    StringCchCopyW(g_config.ipv4_gateway, MAX_ADDR_LEN, value);
+                }
+            }
+            else if (_wcsicmp(section, L"ipv6") == 0) {
+                if (_wcsicmp(key, L"address") == 0) {
+                    StringCchCopyW(g_config.ipv6_address, MAX_ADDR_LEN, value);
+                    g_config.has_ipv6 = 1;
+                }
+                else if (_wcsicmp(key, L"prefix") == 0) {
+                    StringCchCopyW(g_config.ipv6_prefix, 16, value);
+                }
+                else if (_wcsicmp(key, L"gateway") == 0) {
+                    StringCchCopyW(g_config.ipv6_gateway, MAX_ADDR_LEN, value);
+                }
+            }
+        }
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+/* ============================================================================
+ * COMMAND LINE PARSER
+ * ============================================================================ */
+
+typedef enum {
+    MODE_NONE,
+    MODE_HELP,
+    MODE_LIST,
+    MODE_CLOUDFLARE,
+    MODE_GOOGLE,
+    MODE_STATUS
+} RunMode;
+
+static void print_help(void)
+{
+    wprintf(L"\n");
+    wprintf(L"static-ip-fix - Configure static IP and DNS-over-HTTPS on Windows\n");
+    wprintf(L"\n");
+    wprintf(L"USAGE:\n");
+    wprintf(L"    static-ip-fix.exe [OPTIONS] <MODE>\n");
+    wprintf(L"\n");
+    wprintf(L"MODES:\n");
+    wprintf(L"    cloudflare    Configure DNS with Cloudflare (1.1.1.1) + DoH\n");
+    wprintf(L"    google        Configure DNS with Google (8.8.8.8) + DoH\n");
+    wprintf(L"    status        Show current DNS encryption status\n");
+    wprintf(L"\n");
+    wprintf(L"OPTIONS:\n");
+    wprintf(L"    -h, --help              Show this help message\n");
+    wprintf(L"    -c, --config FILE       Load configuration from FILE\n");
+    wprintf(L"    -l, --list-interfaces   List available network interfaces\n");
+    wprintf(L"    -i, --interface NAME    Specify network interface name\n");
+    wprintf(L"    --dns-only              Only configure DNS (skip static IP setup)\n");
+    wprintf(L"\n");
+    wprintf(L"IP OVERRIDE OPTIONS:\n");
+    wprintf(L"    --ipv4 ADDR             IPv4 address (e.g., 192.168.1.100)\n");
+    wprintf(L"    --ipv4-mask MASK        IPv4 subnet mask (e.g., 255.255.255.0)\n");
+    wprintf(L"    --ipv4-gateway GW       IPv4 gateway (e.g., 192.168.1.1)\n");
+    wprintf(L"    --ipv6 ADDR             IPv6 address\n");
+    wprintf(L"    --ipv6-prefix LEN       IPv6 prefix length (e.g., 64)\n");
+    wprintf(L"    --ipv6-gateway GW       IPv6 gateway (link-local address)\n");
+    wprintf(L"\n");
+    wprintf(L"CONFIGURATION FILE:\n");
+    wprintf(L"    The program looks for 'static-ip-fix.ini' in the current directory.\n");
+    wprintf(L"    Use -c/--config to specify a different file.\n");
+    wprintf(L"\n");
+    wprintf(L"    Example config file:\n");
+    wprintf(L"\n");
+    wprintf(L"        [interface]\n");
+    wprintf(L"        name = Ethernet\n");
+    wprintf(L"\n");
+    wprintf(L"        [ipv4]\n");
+    wprintf(L"        address = 192.168.1.100\n");
+    wprintf(L"        netmask = 255.255.255.0\n");
+    wprintf(L"        gateway = 192.168.1.1\n");
+    wprintf(L"\n");
+    wprintf(L"        [ipv6]\n");
+    wprintf(L"        address = 2001:db8::100\n");
+    wprintf(L"        prefix = 64\n");
+    wprintf(L"        gateway = fe80::1\n");
+    wprintf(L"\n");
+    wprintf(L"PRIORITY:\n");
+    wprintf(L"    Command line arguments override config file values.\n");
+    wprintf(L"\n");
+    wprintf(L"EXAMPLES:\n");
+    wprintf(L"    static-ip-fix.exe -l\n");
+    wprintf(L"    static-ip-fix.exe -i \"Wi-Fi\" --dns-only cloudflare\n");
+    wprintf(L"    static-ip-fix.exe -c myconfig.ini cloudflare\n");
+    wprintf(L"    static-ip-fix.exe --interface Ethernet status\n");
+    wprintf(L"\n");
+    wprintf(L"NOTE:\n");
+    wprintf(L"    The cloudflare and google modes require Administrator privileges.\n");
+    wprintf(L"\n");
+}
+
+static RunMode parse_args(int argc, wchar_t *argv[], wchar_t *config_file)
+{
+    RunMode mode = MODE_NONE;
+    config_file[0] = L'\0';
+
+    for (int i = 1; i < argc; i++) {
+        wchar_t *arg = argv[i];
+
+        /* Help */
+        if (_wcsicmp(arg, L"-h") == 0 || _wcsicmp(arg, L"--help") == 0) {
+            return MODE_HELP;
+        }
+
+        /* List interfaces */
+        if (_wcsicmp(arg, L"-l") == 0 || _wcsicmp(arg, L"--list-interfaces") == 0) {
+            return MODE_LIST;
+        }
+
+        /* Config file */
+        if (_wcsicmp(arg, L"-c") == 0 || _wcsicmp(arg, L"--config") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(config_file, MAX_PATH_LEN, argv[++i]);
+            } else {
+                print_error(L"--config requires a file path");
+                return MODE_NONE;
+            }
+            continue;
+        }
+
+        /* Interface */
+        if (_wcsicmp(arg, L"-i") == 0 || _wcsicmp(arg, L"--interface") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.interface_name, MAX_IFACE_LEN, argv[++i]);
+            } else {
+                print_error(L"--interface requires a name");
+                return MODE_NONE;
+            }
+            continue;
+        }
+
+        /* DNS only */
+        if (_wcsicmp(arg, L"--dns-only") == 0) {
+            g_config.dns_only = 1;
+            continue;
+        }
+
+        /* IPv4 overrides */
+        if (_wcsicmp(arg, L"--ipv4") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv4_address, MAX_ADDR_LEN, argv[++i]);
+                g_config.has_ipv4 = 1;
+            }
+            continue;
+        }
+        if (_wcsicmp(arg, L"--ipv4-mask") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv4_mask, MAX_ADDR_LEN, argv[++i]);
+            }
+            continue;
+        }
+        if (_wcsicmp(arg, L"--ipv4-gateway") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv4_gateway, MAX_ADDR_LEN, argv[++i]);
+            }
+            continue;
+        }
+
+        /* IPv6 overrides */
+        if (_wcsicmp(arg, L"--ipv6") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv6_address, MAX_ADDR_LEN, argv[++i]);
+                g_config.has_ipv6 = 1;
+            }
+            continue;
+        }
+        if (_wcsicmp(arg, L"--ipv6-prefix") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv6_prefix, 16, argv[++i]);
+            }
+            continue;
+        }
+        if (_wcsicmp(arg, L"--ipv6-gateway") == 0) {
+            if (i + 1 < argc) {
+                StringCchCopyW(g_config.ipv6_gateway, MAX_ADDR_LEN, argv[++i]);
+            }
+            continue;
+        }
+
+        /* Modes */
+        if (_wcsicmp(arg, L"cloudflare") == 0) {
+            mode = MODE_CLOUDFLARE;
+            continue;
+        }
+        if (_wcsicmp(arg, L"google") == 0) {
+            mode = MODE_GOOGLE;
+            continue;
+        }
+        if (_wcsicmp(arg, L"status") == 0) {
+            mode = MODE_STATUS;
+            continue;
+        }
+
+        /* Unknown argument */
+        wchar_t errmsg[256];
+        StringCchPrintfW(errmsg, 256, L"Unknown argument: %ls", arg);
+        print_error(errmsg);
+        return MODE_NONE;
+    }
+
+    return mode;
+}
+
+/* ============================================================================
  * ROLLBACK FUNCTION
  * ============================================================================ */
 
-/*
- * Rollback all changes - restore DHCP and remove DoH templates
- * This function ignores all errors to ensure maximum cleanup
- */
 static void rollback(void)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
@@ -238,14 +617,14 @@ static void rollback(void)
     /* Reset IPv4 DNS to DHCP */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv4 set dnsservers name=\"%ls\" source=dhcp",
-        INTERFACE_ALIAS);
+        g_config.interface_name);
     run_netsh_silent(cmd);
     print_info(L"IPv4 DNS reset to DHCP");
 
     /* Reset IPv6 DNS to DHCP */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv6 set dnsservers name=\"%ls\" source=dhcp",
-        INTERFACE_ALIAS);
+        g_config.interface_name);
     run_netsh_silent(cmd);
     print_info(L"IPv6 DNS reset to DHCP");
 
@@ -265,20 +644,22 @@ static void rollback(void)
  * STATIC IP CONFIGURATION
  * ============================================================================ */
 
-/*
- * Configure static IPv4 address
- */
 static int apply_static_ipv4(void)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
     int ret;
 
+    if (!g_config.has_ipv4 || g_config.ipv4_address[0] == L'\0') {
+        print_info(L"No IPv4 configuration specified, skipping");
+        return 0;
+    }
+
     print_info(L"Configuring static IPv4 address...");
 
-    /* Set static IPv4 address */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv4 set address name=\"%ls\" static %ls %ls %ls",
-        INTERFACE_ALIAS, STATIC_IPV4_ADDR, STATIC_IPV4_MASK, STATIC_IPV4_GATEWAY);
+        g_config.interface_name, g_config.ipv4_address,
+        g_config.ipv4_mask, g_config.ipv4_gateway);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -288,26 +669,27 @@ static int apply_static_ipv4(void)
 
     wchar_t msg[256];
     StringCchPrintfW(msg, 256, L"IPv4: %ls/%ls gateway %ls",
-        STATIC_IPV4_ADDR, STATIC_IPV4_MASK, STATIC_IPV4_GATEWAY);
+        g_config.ipv4_address, g_config.ipv4_mask, g_config.ipv4_gateway);
     print_success(msg);
 
     return 0;
 }
 
-/*
- * Configure static IPv6 address
- */
 static int apply_static_ipv6(void)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
     int ret;
 
+    if (!g_config.has_ipv6 || g_config.ipv6_address[0] == L'\0') {
+        print_info(L"No IPv6 configuration specified, skipping");
+        return 0;
+    }
+
     print_info(L"Configuring static IPv6 address...");
 
-    /* Set static IPv6 address */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv6 set address interface=\"%ls\" address=%ls/%ls",
-        INTERFACE_ALIAS, STATIC_IPV6_ADDR, STATIC_IPV6_PREFIX);
+        g_config.interface_name, g_config.ipv6_address, g_config.ipv6_prefix);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -316,26 +698,26 @@ static int apply_static_ipv6(void)
     }
 
     /* Add default route via link-local gateway */
-    StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
-        L"interface ipv6 add route ::/0 interface=\"%ls\" nexthop=%ls",
-        INTERFACE_ALIAS, STATIC_IPV6_GATEWAY);
+    if (g_config.ipv6_gateway[0] != L'\0') {
+        wchar_t delcmd[CMD_BUFFER_SIZE];
+        StringCchPrintfW(delcmd, CMD_BUFFER_SIZE,
+            L"interface ipv6 delete route ::/0 interface=\"%ls\"",
+            g_config.interface_name);
+        run_netsh_silent(delcmd);
 
-    /* Route may already exist, so we try delete first then add */
-    wchar_t delcmd[CMD_BUFFER_SIZE];
-    StringCchPrintfW(delcmd, CMD_BUFFER_SIZE,
-        L"interface ipv6 delete route ::/0 interface=\"%ls\"",
-        INTERFACE_ALIAS);
-    run_netsh_silent(delcmd);
+        StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
+            L"interface ipv6 add route ::/0 interface=\"%ls\" nexthop=%ls",
+            g_config.interface_name, g_config.ipv6_gateway);
 
-    ret = run_netsh(cmd);
-    if (ret != 0) {
-        /* Try without nexthop in case of issues */
-        print_error(L"Warning: Could not add IPv6 default route (may already exist)");
+        ret = run_netsh(cmd);
+        if (ret != 0) {
+            print_error(L"Warning: Could not add IPv6 default route");
+        }
     }
 
     wchar_t msg[256];
     StringCchPrintfW(msg, 256, L"IPv6: %ls/%ls gateway %ls",
-        STATIC_IPV6_ADDR, STATIC_IPV6_PREFIX, STATIC_IPV6_GATEWAY);
+        g_config.ipv6_address, g_config.ipv6_prefix, g_config.ipv6_gateway);
     print_success(msg);
 
     return 0;
@@ -345,9 +727,6 @@ static int apply_static_ipv6(void)
  * DNS CONFIGURATION
  * ============================================================================ */
 
-/*
- * Configure DNS servers for IPv4
- */
 static int apply_dns_ipv4(const wchar_t *dns1, const wchar_t *dns2)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
@@ -355,10 +734,9 @@ static int apply_dns_ipv4(const wchar_t *dns1, const wchar_t *dns2)
 
     print_info(L"Configuring IPv4 DNS servers...");
 
-    /* Set primary DNS */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv4 set dnsservers name=\"%ls\" static %ls primary validate=no",
-        INTERFACE_ALIAS, dns1);
+        g_config.interface_name, dns1);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -366,10 +744,9 @@ static int apply_dns_ipv4(const wchar_t *dns1, const wchar_t *dns2)
         return -1;
     }
 
-    /* Add secondary DNS */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv4 add dnsservers name=\"%ls\" %ls index=2 validate=no",
-        INTERFACE_ALIAS, dns2);
+        g_config.interface_name, dns2);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -384,9 +761,6 @@ static int apply_dns_ipv4(const wchar_t *dns1, const wchar_t *dns2)
     return 0;
 }
 
-/*
- * Configure DNS servers for IPv6
- */
 static int apply_dns_ipv6(const wchar_t *dns1, const wchar_t *dns2)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
@@ -394,10 +768,9 @@ static int apply_dns_ipv6(const wchar_t *dns1, const wchar_t *dns2)
 
     print_info(L"Configuring IPv6 DNS servers...");
 
-    /* Set primary DNS */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv6 set dnsservers name=\"%ls\" static %ls primary validate=no",
-        INTERFACE_ALIAS, dns1);
+        g_config.interface_name, dns1);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -405,10 +778,9 @@ static int apply_dns_ipv6(const wchar_t *dns1, const wchar_t *dns2)
         return -1;
     }
 
-    /* Add secondary DNS */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"interface ipv6 add dnsservers name=\"%ls\" %ls index=2 validate=no",
-        INTERFACE_ALIAS, dns2);
+        g_config.interface_name, dns2);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -427,23 +799,18 @@ static int apply_dns_ipv6(const wchar_t *dns1, const wchar_t *dns2)
  * DNS-OVER-HTTPS CONFIGURATION
  * ============================================================================ */
 
-/*
- * Add DoH encryption template for a DNS server
- */
-static int add_doh_template(const wchar_t *server, const wchar_t *template)
+static int add_doh_template(const wchar_t *server, const wchar_t *doh_template)
 {
     wchar_t cmd[CMD_BUFFER_SIZE];
     int ret;
 
-    /* First delete any existing template (ignore errors) */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"dns delete encryption server=%ls", server);
     run_netsh_silent(cmd);
 
-    /* Add new template with autoupgrade=yes and udpfallback=no */
     StringCchPrintfW(cmd, CMD_BUFFER_SIZE,
         L"dns add encryption server=%ls dohtemplate=%ls autoupgrade=yes udpfallback=no",
-        server, template);
+        server, doh_template);
 
     ret = run_netsh(cmd);
     if (ret != 0) {
@@ -456,22 +823,19 @@ static int add_doh_template(const wchar_t *server, const wchar_t *template)
     return 0;
 }
 
-/*
- * Configure DoH for all DNS servers
- */
 static int apply_doh(const wchar_t *dns_ipv4_1, const wchar_t *dns_ipv4_2,
                      const wchar_t *dns_ipv6_1, const wchar_t *dns_ipv6_2,
-                     const wchar_t *template)
+                     const wchar_t *doh_template)
 {
     print_info(L"Configuring DNS-over-HTTPS encryption...");
 
-    if (add_doh_template(dns_ipv4_1, template) != 0) return -1;
-    if (add_doh_template(dns_ipv4_2, template) != 0) return -1;
-    if (add_doh_template(dns_ipv6_1, template) != 0) return -1;
-    if (add_doh_template(dns_ipv6_2, template) != 0) return -1;
+    if (add_doh_template(dns_ipv4_1, doh_template) != 0) return -1;
+    if (add_doh_template(dns_ipv4_2, doh_template) != 0) return -1;
+    if (add_doh_template(dns_ipv6_1, doh_template) != 0) return -1;
+    if (add_doh_template(dns_ipv6_2, doh_template) != 0) return -1;
 
     wchar_t msg[512];
-    StringCchPrintfW(msg, 512, L"DoH template: %ls (autoupgrade=yes, udpfallback=no)", template);
+    StringCchPrintfW(msg, 512, L"DoH template: %ls (autoupgrade=yes, udpfallback=no)", doh_template);
     print_success(msg);
 
     return 0;
@@ -481,18 +845,13 @@ static int apply_doh(const wchar_t *dns_ipv4_1, const wchar_t *dns_ipv4_2,
  * STATUS MODE
  * ============================================================================ */
 
-/* Structure to hold DNS server info */
 typedef struct {
-    wchar_t address[64];
+    wchar_t address[MAX_ADDR_LEN];
     int has_template;
     int autoupgrade;
     int udpfallback;
-    wchar_t template[256];
 } DnsServerInfo;
 
-/*
- * Query DoH encryption info for a specific server
- */
 static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
 {
     HANDLE hReadPipe, hWritePipe;
@@ -503,13 +862,11 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
     char buffer[4096];
     DWORD bytesRead;
 
-    StringCchCopyW(info->address, 64, server);
+    StringCchCopyW(info->address, MAX_ADDR_LEN, server);
     info->has_template = 0;
     info->autoupgrade = 0;
-    info->udpfallback = 1; /* Default to yes (insecure) */
-    info->template[0] = L'\0';
+    info->udpfallback = 1;
 
-    /* Create pipe for reading output */
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
     sa.lpSecurityDescriptor = NULL;
@@ -541,12 +898,10 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
 
     CloseHandle(hWritePipe);
 
-    /* Read output */
     ZeroMemory(buffer, sizeof(buffer));
     if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
         buffer[bytesRead] = '\0';
 
-        /* Parse output - look for key indicators */
         if (strstr(buffer, "Encryption settings") != NULL ||
             strstr(buffer, "DNS-over-HTTPS template") != NULL ||
             strstr(buffer, "dohtemplate") != NULL) {
@@ -564,19 +919,6 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
                 info->udpfallback = 0;
             }
         }
-
-        /* Extract template URL */
-        char *templateStart = strstr(buffer, "https://");
-        if (templateStart) {
-            char templateUrl[256];
-            int i = 0;
-            while (templateStart[i] && !isspace((unsigned char)templateStart[i]) && i < 255) {
-                templateUrl[i] = templateStart[i];
-                i++;
-            }
-            templateUrl[i] = '\0';
-            MultiByteToWideChar(CP_UTF8, 0, templateUrl, -1, info->template, 256);
-        }
     }
 
     WaitForSingleObject(pi.hProcess, 5000);
@@ -586,9 +928,6 @@ static void query_doh_info(const wchar_t *server, DnsServerInfo *info)
     CloseHandle(hReadPipe);
 }
 
-/*
- * Get configured DNS servers for the interface
- */
 static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
                               DnsServerInfo *ipv6_servers, int *ipv6_count)
 {
@@ -603,11 +942,11 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
     *ipv4_count = 0;
     *ipv6_count = 0;
 
-    /* Create pipe */
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
     sa.lpSecurityDescriptor = NULL;
 
+    /* Get IPv4 DNS servers */
     if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
         return -1;
     }
@@ -623,9 +962,8 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
 
     ZeroMemory(&pi, sizeof(pi));
 
-    /* Get IPv4 DNS servers */
     StringCchPrintfW(cmdline, CMD_BUFFER_SIZE,
-        L"netsh.exe interface ipv4 show dnsservers name=\"%ls\"", INTERFACE_ALIAS);
+        L"netsh.exe interface ipv4 show dnsservers name=\"%ls\"", g_config.interface_name);
 
     if (CreateProcessW(NULL, cmdline, NULL, NULL, TRUE,
                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
@@ -635,16 +973,12 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
         if (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             buffer[bytesRead] = '\0';
 
-            /* Parse for IP addresses */
             char *line = strtok(buffer, "\r\n");
             while (line && *ipv4_count < 4) {
-                /* Look for lines containing IP addresses */
                 char *p = line;
                 while (*p == ' ') p++;
 
-                /* Check if line starts with a digit (IP address) */
                 if (*p >= '0' && *p <= '9') {
-                    /* Extract the IP */
                     char ip[64] = {0};
                     int i = 0;
                     while (*p && *p != ' ' && *p != '\r' && *p != '\n' && i < 63) {
@@ -652,9 +986,9 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
                     }
                     ip[i] = '\0';
 
-                    if (strlen(ip) >= 7) { /* Minimum valid IP length */
+                    if (strlen(ip) >= 7) {
                         MultiByteToWideChar(CP_UTF8, 0, ip, -1,
-                            ipv4_servers[*ipv4_count].address, 64);
+                            ipv4_servers[*ipv4_count].address, MAX_ADDR_LEN);
                         query_doh_info(ipv4_servers[*ipv4_count].address,
                             &ipv4_servers[*ipv4_count]);
                         (*ipv4_count)++;
@@ -690,7 +1024,7 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
     ZeroMemory(&pi, sizeof(pi));
 
     StringCchPrintfW(cmdline, CMD_BUFFER_SIZE,
-        L"netsh.exe interface ipv6 show dnsservers name=\"%ls\"", INTERFACE_ALIAS);
+        L"netsh.exe interface ipv6 show dnsservers name=\"%ls\"", g_config.interface_name);
 
     if (CreateProcessW(NULL, cmdline, NULL, NULL, TRUE,
                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
@@ -705,7 +1039,6 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
                 char *p = line;
                 while (*p == ' ') p++;
 
-                /* IPv6 addresses start with hex digit or contain :: */
                 if (((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') ||
                      (*p >= 'A' && *p <= 'F')) && strchr(p, ':')) {
                     char ip[64] = {0};
@@ -717,7 +1050,7 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
 
                     if (strlen(ip) >= 3 && strchr(ip, ':')) {
                         MultiByteToWideChar(CP_UTF8, 0, ip, -1,
-                            ipv6_servers[*ipv6_count].address, 64);
+                            ipv6_servers[*ipv6_count].address, MAX_ADDR_LEN);
                         query_doh_info(ipv6_servers[*ipv6_count].address,
                             &ipv6_servers[*ipv6_count]);
                         (*ipv6_count)++;
@@ -739,9 +1072,6 @@ static int get_configured_dns(DnsServerInfo *ipv4_servers, int *ipv4_count,
     return 0;
 }
 
-/*
- * Run status mode - display encryption status
- */
 static int run_status(void)
 {
     DnsServerInfo ipv4_servers[4];
@@ -753,10 +1083,9 @@ static int run_status(void)
     int any_unencrypted = 0;
 
     wprintf(L"\n");
-    wprintf(L"Status for interface: %ls\n", INTERFACE_ALIAS);
+    wprintf(L"Status for interface: %ls\n", g_config.interface_name);
     wprintf(L"========================================\n\n");
 
-    /* Get DNS servers and their encryption status */
     get_configured_dns(ipv4_servers, &ipv4_count, ipv6_servers, &ipv6_count);
 
     /* Display IPv4 DNS */
@@ -845,7 +1174,6 @@ static int run_status(void)
     wprintf(L"Summary:\n");
     wprintf(L"----------------------------------------\n");
 
-    /* IPv4 status */
     if (ipv4_total == 0) {
         wprintf(L"  IPv4: NO DNS CONFIGURED\n");
     } else if (ipv4_encrypted == ipv4_total) {
@@ -854,7 +1182,6 @@ static int run_status(void)
         wprintf(L"  IPv4: PARTIALLY ENCRYPTED (%d/%d servers)\n", ipv4_encrypted, ipv4_total);
     }
 
-    /* IPv6 status */
     if (ipv6_total == 0) {
         wprintf(L"  IPv6: NO DNS CONFIGURED\n");
     } else if (ipv6_encrypted == ipv6_total) {
@@ -863,15 +1190,11 @@ static int run_status(void)
         wprintf(L"  IPv6: PARTIALLY ENCRYPTED (%d/%d servers)\n", ipv6_encrypted, ipv6_total);
     }
 
-    /* Fallback status */
     wprintf(L"  Fallback: %ls\n", any_fallback ? L"ENABLED (insecure)" : L"DISABLED");
-
-    /* Unencrypted servers */
     wprintf(L"  Unencrypted DNS: %ls\n", any_unencrypted ? L"YES (insecure)" : L"NONE");
 
     wprintf(L"\n");
 
-    /* Overall result */
     int fully_encrypted = (ipv4_total > 0 || ipv6_total > 0) &&
                           (ipv4_encrypted == ipv4_total) &&
                           (ipv6_encrypted == ipv6_total) &&
@@ -897,34 +1220,36 @@ static int run_cloudflare(void)
 {
     wprintf(L"\n");
     wprintf(L"========================================\n");
-    wprintf(L"  Static IP + Cloudflare DNS + DoH\n");
+    if (g_config.dns_only) {
+        wprintf(L"  Cloudflare DNS + DoH (DNS only mode)\n");
+    } else {
+        wprintf(L"  Static IP + Cloudflare DNS + DoH\n");
+    }
+    wprintf(L"  Interface: %ls\n", g_config.interface_name);
     wprintf(L"========================================\n\n");
 
-    /* Apply static IPv4 */
-    if (apply_static_ipv4() != 0) {
-        rollback();
-        return 1;
+    if (!g_config.dns_only) {
+        if (apply_static_ipv4() != 0) {
+            rollback();
+            return 1;
+        }
+
+        if (apply_static_ipv6() != 0) {
+            rollback();
+            return 1;
+        }
     }
 
-    /* Apply static IPv6 */
-    if (apply_static_ipv6() != 0) {
-        rollback();
-        return 1;
-    }
-
-    /* Apply IPv4 DNS */
     if (apply_dns_ipv4(CF_DNS_IPV4_1, CF_DNS_IPV4_2) != 0) {
         rollback();
         return 1;
     }
 
-    /* Apply IPv6 DNS */
     if (apply_dns_ipv6(CF_DNS_IPV6_1, CF_DNS_IPV6_2) != 0) {
         rollback();
         return 1;
     }
 
-    /* Apply DoH encryption */
     if (apply_doh(CF_DNS_IPV4_1, CF_DNS_IPV4_2,
                   CF_DNS_IPV6_1, CF_DNS_IPV6_2, CF_DOH_TEMPLATE) != 0) {
         rollback();
@@ -946,34 +1271,36 @@ static int run_google(void)
 {
     wprintf(L"\n");
     wprintf(L"========================================\n");
-    wprintf(L"  Static IP + Google DNS + DoH\n");
+    if (g_config.dns_only) {
+        wprintf(L"  Google DNS + DoH (DNS only mode)\n");
+    } else {
+        wprintf(L"  Static IP + Google DNS + DoH\n");
+    }
+    wprintf(L"  Interface: %ls\n", g_config.interface_name);
     wprintf(L"========================================\n\n");
 
-    /* Apply static IPv4 */
-    if (apply_static_ipv4() != 0) {
-        rollback();
-        return 1;
+    if (!g_config.dns_only) {
+        if (apply_static_ipv4() != 0) {
+            rollback();
+            return 1;
+        }
+
+        if (apply_static_ipv6() != 0) {
+            rollback();
+            return 1;
+        }
     }
 
-    /* Apply static IPv6 */
-    if (apply_static_ipv6() != 0) {
-        rollback();
-        return 1;
-    }
-
-    /* Apply IPv4 DNS */
     if (apply_dns_ipv4(GOOGLE_DNS_IPV4_1, GOOGLE_DNS_IPV4_2) != 0) {
         rollback();
         return 1;
     }
 
-    /* Apply IPv6 DNS */
     if (apply_dns_ipv6(GOOGLE_DNS_IPV6_1, GOOGLE_DNS_IPV6_2) != 0) {
         rollback();
         return 1;
     }
 
-    /* Apply DoH encryption */
     if (apply_doh(GOOGLE_DNS_IPV4_1, GOOGLE_DNS_IPV4_2,
                   GOOGLE_DNS_IPV6_1, GOOGLE_DNS_IPV6_2, GOOGLE_DOH_TEMPLATE) != 0) {
         rollback();
@@ -991,46 +1318,88 @@ static int run_google(void)
  * MAIN ENTRY POINT
  * ============================================================================ */
 
-static void print_usage(void)
-{
-    wprintf(L"\n");
-    wprintf(L"static-ip-fix.exe - Configure static IP and DNS-over-HTTPS\n");
-    wprintf(L"\n");
-    wprintf(L"Usage:\n");
-    wprintf(L"  static-ip-fix.exe cloudflare   Configure with Cloudflare DNS\n");
-    wprintf(L"  static-ip-fix.exe google       Configure with Google DNS\n");
-    wprintf(L"  static-ip-fix.exe status       Show current encryption status\n");
-    wprintf(L"\n");
-    wprintf(L"The cloudflare and google modes require Administrator privileges.\n");
-    wprintf(L"\n");
-}
-
 int wmain(int argc, wchar_t *argv[])
 {
-    /* Validate interface alias */
-    if (!validate_interface_alias(INTERFACE_ALIAS)) {
+    wchar_t config_file[MAX_PATH_LEN] = L"";
+    RunMode mode;
+
+    /* Initialize config with empty values */
+    ZeroMemory(&g_config, sizeof(g_config));
+
+    /* Parse command line arguments first (to get config file path) */
+    mode = parse_args(argc, argv, config_file);
+
+    /* Handle help and list modes immediately */
+    if (mode == MODE_HELP) {
+        print_help();
+        return 0;
+    }
+
+    if (mode == MODE_LIST) {
+        list_interfaces();
+        return 0;
+    }
+
+    /* Try to load config file */
+    if (config_file[0] != L'\0') {
+        /* Explicit config file specified */
+        if (parse_config_file(config_file) != 0) {
+            wchar_t errmsg[512];
+            StringCchPrintfW(errmsg, 512, L"Cannot read config file: %ls", config_file);
+            print_error(errmsg);
+            return 1;
+        }
+        wchar_t msg[512];
+        StringCchPrintfW(msg, 512, L"Loaded config from: %ls", config_file);
+        print_info(msg);
+    } else {
+        /* Try default config file (optional) */
+        if (parse_config_file(DEFAULT_CONFIG_FILE) == 0) {
+            print_info(L"Loaded config from: static-ip-fix.ini");
+        }
+    }
+
+    /* Re-parse args to override config file values */
+    wchar_t dummy[MAX_PATH_LEN];
+    mode = parse_args(argc, argv, dummy);
+
+    /* Validate we have a mode */
+    if (mode == MODE_NONE) {
+        print_error(L"No mode specified. Use --help for usage information.");
         return 1;
     }
 
-    /* Check arguments */
-    if (argc != 2) {
-        print_usage();
+    /* Validate interface is set */
+    if (g_config.interface_name[0] == L'\0') {
+        print_error(L"No interface specified. Use -i/--interface or set in config file.");
+        wprintf(L"\nTip: Use -l/--list-interfaces to see available interfaces.\n");
         return 1;
     }
 
-    /* Handle modes */
-    if (_wcsicmp(argv[1], L"cloudflare") == 0) {
-        return run_cloudflare();
-    }
-    else if (_wcsicmp(argv[1], L"google") == 0) {
-        return run_google();
-    }
-    else if (_wcsicmp(argv[1], L"status") == 0) {
-        return run_status();
-    }
-    else {
-        print_error(L"Unknown mode");
-        print_usage();
+    /* Validate interface name */
+    if (!validate_interface_alias(g_config.interface_name)) {
+        print_error(L"Invalid interface name");
         return 1;
+    }
+
+    /* Set default values if not specified */
+    if (g_config.ipv4_mask[0] == L'\0' && g_config.has_ipv4) {
+        StringCchCopyW(g_config.ipv4_mask, MAX_ADDR_LEN, L"255.255.255.0");
+    }
+    if (g_config.ipv6_prefix[0] == L'\0' && g_config.has_ipv6) {
+        StringCchCopyW(g_config.ipv6_prefix, 16, L"64");
+    }
+
+    /* Execute mode */
+    switch (mode) {
+        case MODE_CLOUDFLARE:
+            return run_cloudflare();
+        case MODE_GOOGLE:
+            return run_google();
+        case MODE_STATUS:
+            return run_status();
+        default:
+            print_error(L"Invalid mode");
+            return 1;
     }
 }
