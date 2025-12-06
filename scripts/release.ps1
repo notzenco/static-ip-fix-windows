@@ -126,4 +126,10 @@ git commit -m "chore: release $newVersion"
 git tag $newVersion
 
 Write-Host "`nCreated tag $newVersion" -ForegroundColor Green
-Write-Host "Push with: git push && git push --tags" -ForegroundColor Cyan
+
+# Push everything
+Write-Host "Pushing to origin..." -ForegroundColor Cyan
+git push
+git push --tags
+
+Write-Host "`nReleased $newVersion" -ForegroundColor Green
