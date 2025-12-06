@@ -1,6 +1,9 @@
 # Build output
 build/
 bin/
+compile_commands.json
 
 # Personal config (use static-ip-fix.example.ini as template)
 static-ip-fix.ini
+
+.cache

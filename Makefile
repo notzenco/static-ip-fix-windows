@@ -10,26 +10,28 @@ BIN_DIR = bin
 all:
 	@cmake -S . -B $(BUILD_DIR) -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 	@cmake --build $(BUILD_DIR)
-	@mkdir -p $(BIN_DIR)
-	@cp $(BUILD_DIR)/bin/static-ip-fix.exe $(BIN_DIR)/
+	@cmake -E make_directory $(BIN_DIR)
+	@cmake -E copy $(BUILD_DIR)/bin/static-ip-fix.exe $(BIN_DIR)/
+	@cmake -E copy $(BUILD_DIR)/compile_commands.json .
 
 # Debug build
 debug:
 	@cmake -S . -B $(BUILD_DIR) -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
 	@cmake --build $(BUILD_DIR)
-	@mkdir -p $(BIN_DIR)
-	@cp $(BUILD_DIR)/bin/static-ip-fix.exe $(BIN_DIR)/
+	@cmake -E make_directory $(BIN_DIR)
+	@cmake -E copy $(BUILD_DIR)/bin/static-ip-fix.exe $(BIN_DIR)/
+	@cmake -E copy $(BUILD_DIR)/compile_commands.json .
 
 # Explicit release build
 release: all
 
 # Clean build artifacts
 clean:
-	@rm -rf $(BUILD_DIR) $(BIN_DIR)
+	@cmake -E rm -rf $(BUILD_DIR) $(BIN_DIR)
 
 # Visual Studio build
 vs:
 	@cmake -S . -B $(BUILD_DIR) -G "Visual Studio 17 2022"
 	@cmake --build $(BUILD_DIR) --config Release
-	@mkdir -p $(BIN_DIR)
-	@cp $(BUILD_DIR)/bin/Release/static-ip-fix.exe $(BIN_DIR)/
+	@cmake -E make_directory $(BIN_DIR)
+	@cmake -E copy $(BUILD_DIR)/bin/Release/static-ip-fix.exe $(BIN_DIR)/

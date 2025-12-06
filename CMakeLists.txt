@@ -14,6 +14,9 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Generate compile_commands.json for editor/LSP support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin)
@@ -21,7 +24,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin)
 
 # Auto-detect source files
 file(GLOB SOURCES "src/*.c")
-file(GLOB HEADERS "src/*.h")
+file(GLOB HEADERS "include/*.h")
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
@@ -50,7 +53,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 # Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 # Install target
 install(TARGETS ${PROJECT_NAME}
