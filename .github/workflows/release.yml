@@ -42,12 +42,8 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          # Extract only the first line (subject) of the commit message
-          SUBJECT=$(echo "$COMMIT_MSG" | head -n1)
-          echo "Processing commit subject: $SUBJECT"
-
           # Process the commit
-          .github/scripts/version-manager.sh process-push "$SUBJECT" "${COMMIT_SHA:0:7}"
+          .github/scripts/version-manager.sh process-push "$COMMIT_MSG" "${COMMIT_SHA:0:7}"
 
       - name: Commit changelog updates
         id: commit

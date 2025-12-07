@@ -55,36 +55,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: static-ip-fix-${{ github.sha }}
-          path: ./release-assets
 
-      - name: List downloaded files
-        run: |
-          echo "Downloaded files:"
-          ls -la ./release-assets/
+      - name: Make script executable
+        run: chmod +x .github/scripts/version-manager.sh
 
       - name: Extract release notes from changelog
         id: notes
         run: |
           VERSION="${{ github.ref_name }}"
-
-          # Check if script exists (won't exist for older tags)
-          if [[ -x .github/scripts/version-manager.sh ]]; then
-            NOTES=$(.github/scripts/version-manager.sh extract-notes "$VERSION")
-          else
-            # Fallback: extract from CHANGELOG.md directly
-            if [[ -f CHANGELOG.md ]]; then
-              NOTES=$(awk "/^## \\[${VERSION}\\]/{flag=1; next} /^## \\[/{flag=0} flag" CHANGELOG.md)
-            fi
-          fi
-
-          # If still empty, use a default message
-          if [[ -z "$NOTES" ]]; then
-            NOTES="Release ${VERSION}"
-          fi
-
+          NOTES=$(.github/scripts/version-manager.sh extract-notes "$VERSION")
+          # Write to file for the release action
           echo "$NOTES" > release_notes.md
+          # Also output for debugging
           echo "Release notes for $VERSION:"
-          cat release_notes.md
+          echo "$NOTES"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -92,6 +76,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body_path: release_notes.md
-          files: ./release-assets/static-ip-fix.exe
+          files: static-ip-fix.exe
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
