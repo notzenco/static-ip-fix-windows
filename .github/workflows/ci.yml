@@ -56,19 +56,29 @@ jobs:
         with:
           name: static-ip-fix-${{ github.sha }}
 
-      - name: Make script executable
-        run: chmod +x .github/scripts/version-manager.sh
-
       - name: Extract release notes from changelog
         id: notes
         run: |
           VERSION="${{ github.ref_name }}"
-          NOTES=$(.github/scripts/version-manager.sh extract-notes "$VERSION")
-          # Write to file for the release action
+
+          # Check if script exists (won't exist for older tags)
+          if [[ -x .github/scripts/version-manager.sh ]]; then
+            NOTES=$(.github/scripts/version-manager.sh extract-notes "$VERSION")
+          else
+            # Fallback: extract from CHANGELOG.md directly
+            if [[ -f CHANGELOG.md ]]; then
+              NOTES=$(awk "/^## \\[${VERSION}\\]/{flag=1; next} /^## \\[/{flag=0} flag" CHANGELOG.md)
+            fi
+          fi
+
+          # If still empty, use a default message
+          if [[ -z "$NOTES" ]]; then
+            NOTES="Release ${VERSION}"
+          fi
+
           echo "$NOTES" > release_notes.md
-          # Also output for debugging
           echo "Release notes for $VERSION:"
-          echo "$NOTES"
+          cat release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
