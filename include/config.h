@@ -41,7 +41,6 @@ typedef struct {
     int has_ipv4;
     int has_ipv6;
     int has_custom_dns;
-    int cli_mode;       /* Force CLI mode (skip TUI) */
 } Config;
 
 /* Global configuration instance */

@@ -19,7 +19,6 @@
 #include "network.h"
 #include "status.h"
 #include "utils.h"
-#include "tui/tui.h"
 
 /* ============================================================================
  * MAIN ENTRY POINT
@@ -70,17 +69,7 @@ int wmain(int argc, wchar_t *argv[]) {
     wchar_t dummy[MAX_PATH_LEN];
     mode = config_parse_args(argc, argv, dummy);
 
-    /* Launch TUI if no mode specified and not in CLI mode */
-    if (mode == MODE_NONE && !g_config.cli_mode) {
-        if (!tui_is_supported()) {
-            print_error(L"TUI mode requires Windows 10+ with VT100 support.");
-            print_info(L"Use --cli flag for non-interactive mode.");
-            return 1;
-        }
-        return tui_run();
-    }
-
-    /* Validate mode for CLI */
+    /* Validate mode */
     if (mode == MODE_NONE) {
         print_error(L"No mode specified. Use --help for usage information.");
         return 1;

@@ -186,12 +186,6 @@ RunMode config_parse_args(int argc, wchar_t *argv[], wchar_t *config_file)
             continue;
         }
 
-        /* CLI mode (skip TUI) */
-        if (_wcsicmp(arg, L"--cli") == 0) {
-            g_config.cli_mode = 1;
-            continue;
-        }
-
         /* IPv4 overrides */
         if (_wcsicmp(arg, L"--ipv4") == 0) {
             if (i + 1 < argc) {
@@ -286,7 +280,6 @@ void config_print_help(void)
     wprintf(L"    -l, --list-interfaces   List available network interfaces\n");
     wprintf(L"    -i, --interface NAME    Specify network interface name\n");
     wprintf(L"    --dns-only              Only configure DNS (skip static IP setup)\n");
-    wprintf(L"    --cli                   Use command-line mode (skip interactive TUI)\n");
     wprintf(L"\n");
     wprintf(L"IP OVERRIDE OPTIONS:\n");
     wprintf(L"    --ipv4 ADDR             IPv4 address (e.g., 192.168.1.100)\n");
@@ -307,7 +300,6 @@ void config_print_help(void)
     wprintf(L"    static-ip-fix.exe --interface Ethernet status\n");
     wprintf(L"\n");
     wprintf(L"NOTE:\n");
-    wprintf(L"    Running without arguments launches an interactive TUI.\n");
     wprintf(L"    The cloudflare and google modes require Administrator privileges.\n");
     wprintf(L"\n");
 }
