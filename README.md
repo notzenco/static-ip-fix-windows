@@ -2,21 +2,31 @@
 
 A Windows command-line tool to configure static IP addresses and DNS-over-HTTPS (DoH) encryption.
 
+## Quick Start
+
+```bash
+# List your network interfaces
+static-ip-fix.exe -l
+
+# Enable encrypted DNS on your interface (run as Administrator)
+static-ip-fix.exe -i "Ethernet" --dns-only cloudflare
+```
+
 ## Features
 
-- Configure static IPv4 and IPv6 addresses
-- Set up DNS servers with DNS-over-HTTPS encryption
-- Support for Cloudflare (1.1.1.1) and Google (8.8.8.8) DNS
-- DNS-only mode for quick DoH setup without changing IP
-- Automatic rollback on failure
-- Configuration file support
-- Interface auto-detection
+- **Static IP Configuration** - Set IPv4 and IPv6 addresses, masks, and gateways
+- **DNS-over-HTTPS (DoH)** - Encrypt DNS queries to prevent eavesdropping
+- **Built-in Providers** - Cloudflare (1.1.1.1) and Google (8.8.8.8) with one command
+- **Custom DNS** - Define your own DNS servers and DoH templates
+- **DNS-only Mode** - Enable DoH without changing your IP configuration
+- **Automatic Rollback** - Reverts changes if any step fails
+- **Config File Support** - Save settings in an INI file for reuse
 
 ## Requirements
 
-- Windows 10/11
-- Administrator privileges (for cloudflare/google modes)
-- CMake 3.16+ and MinGW-w64 or Visual Studio (for building)
+- Windows 10 or 11
+- Administrator privileges (for DNS configuration)
+- CMake 3.16+ and MinGW-w64 or Visual Studio 2022 (for building from source)
 
 ## Installation
 
@@ -27,12 +37,18 @@ Download `static-ip-fix.exe` from the [Releases](../../releases) page.
 ### Build from Source
 
 ```bash
-make          # Build (Release)
-make debug    # Build (Debug)
-make vs       # Build with Visual Studio
-make test     # Run tests
-make clean    # Clean build
+git clone https://github.com/yourusername/static-ip-fix-windows.git
+cd static-ip-fix-windows
+make
 ```
+
+| Command | Description |
+|---------|-------------|
+| `make` | Build release (MinGW) |
+| `make debug` | Build with debug symbols |
+| `make vs` | Build with Visual Studio 2022 |
+| `make test` | Run unit tests |
+| `make clean` | Remove build artifacts |
 
 Output: `bin/static-ip-fix.exe`
 
@@ -40,59 +56,58 @@ Output: `bin/static-ip-fix.exe`
 
 ```
 static-ip-fix.exe [OPTIONS] <MODE>
-
-MODES:
-    cloudflare    Configure DNS with Cloudflare (1.1.1.1) + DoH
-    google        Configure DNS with Google (8.8.8.8) + DoH
-    custom        Configure DNS with custom servers from config file
-    status        Show current DNS encryption status
-
-OPTIONS:
-    -h, --help              Show help message
-    -c, --config FILE       Load configuration from FILE
-    -l, --list-interfaces   List available network interfaces
-    -i, --interface NAME    Specify network interface name
-    --dns-only              Only configure DNS (skip static IP setup)
-
-IP OVERRIDE OPTIONS:
-    --ipv4 ADDR             IPv4 address
-    --ipv4-mask MASK        IPv4 subnet mask
-    --ipv4-gateway GW       IPv4 gateway
-    --ipv6 ADDR             IPv6 address
-    --ipv6-prefix LEN       IPv6 prefix length
-    --ipv6-gateway GW       IPv6 gateway
 ```
+
+### Modes
+
+| Mode | Description |
+|------|-------------|
+| `cloudflare` | Configure DNS with Cloudflare (1.1.1.1) + DoH |
+| `google` | Configure DNS with Google (8.8.8.8) + DoH |
+| `custom` | Configure DNS with custom servers from config file |
+| `status` | Show current DNS encryption status |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message |
+| `-l, --list-interfaces` | List available network interfaces |
+| `-i, --interface NAME` | Specify network interface name |
+| `-c, --config FILE` | Load configuration from FILE |
+| `--dns-only` | Only configure DNS (skip static IP setup) |
+
+### IP Override Options
+
+| Option | Description |
+|--------|-------------|
+| `--ipv4 ADDR` | IPv4 address |
+| `--ipv4-mask MASK` | IPv4 subnet mask |
+| `--ipv4-gateway GW` | IPv4 gateway |
+| `--ipv6 ADDR` | IPv6 address |
+| `--ipv6-prefix LEN` | IPv6 prefix length |
+| `--ipv6-gateway GW` | IPv6 gateway |
 
 ## Examples
 
-### List available network interfaces
-
 ```bash
+# List available network interfaces
 static-ip-fix.exe -l
-```
 
-### Quick DNS-only setup with Cloudflare
-
-```bash
+# Quick DNS-only setup with Cloudflare
 static-ip-fix.exe -i Ethernet --dns-only cloudflare
-```
 
-### Full static IP + DNS setup using config file
-
-```bash
+# Full static IP + DNS setup using config file
 static-ip-fix.exe -c myconfig.ini cloudflare
-```
 
-### Check current DNS encryption status
-
-```bash
+# Check current DNS encryption status
 static-ip-fix.exe -i Ethernet status
-```
 
-### Override config with CLI arguments
-
-```bash
+# Override config file settings with CLI arguments
 static-ip-fix.exe -c config.ini --ipv4 192.168.1.50 cloudflare
+
+# Use custom DNS provider defined in config
+static-ip-fix.exe -i Ethernet custom
 ```
 
 ## Configuration File
@@ -151,6 +166,18 @@ This will:
 
 Your existing IP configuration remains unchanged.
 
+## How It Works
+
+DNS-over-HTTPS (DoH) encrypts your DNS queries, preventing ISPs and network observers from seeing which websites you visit. This tool configures Windows to use DoH with these settings:
+
+- **Auto-upgrade**: Automatically uses DoH when available
+- **No UDP fallback**: Refuses unencrypted DNS (strict mode)
+
+Under the hood, the tool executes `netsh` commands to:
+1. Set DNS server addresses (IPv4 and IPv6)
+2. Register DoH encryption templates
+3. Optionally configure static IP addresses
+
 ## Rollback
 
 If any step fails during configuration, the tool automatically rolls back:
@@ -159,11 +186,19 @@ If any step fails during configuration, the tool automatically rolls back:
 
 This ensures you don't end up with a half-configured network.
 
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| "Access denied" error | Run as Administrator (right-click → Run as administrator) |
+| Interface not found | Use `-l` to list interfaces; use exact name with quotes if it contains spaces |
+| No internet after config | Verify your gateway IP matches your router; run with `--dns-only` to skip IP config |
+| Status shows "NOT ENCRYPTED" | Ensure Windows is updated; DoH requires Windows 10 build 19628+ |
+
 ## Security
 
-This tool uses secure Windows APIs:
-- `CreateProcessW` for process execution (no shell injection)
-- `StringCchPrintfW` for safe string formatting
+- Uses `CreateProcessW` for process execution (no shell injection)
+- Safe string formatting with `StringCchPrintfW`
 - Input validation for interface names
 - No plaintext password handling
 
@@ -173,4 +208,4 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome on [GitHub](../../issues).
