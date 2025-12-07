@@ -24,7 +24,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin)
 
 # Auto-detect source files
 file(GLOB SOURCES "src/*.c")
+file(GLOB TUI_SOURCES "src/tui/*.c")
 file(GLOB HEADERS "include/*.h")
+file(GLOB TUI_HEADERS "include/tui/*.h")
+
+# Combine sources
+list(APPEND SOURCES ${TUI_SOURCES})
+list(APPEND HEADERS ${TUI_HEADERS})
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
@@ -53,7 +59,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 # Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/tui
+)
 
 # ============================================================================
 # TEST TARGET
