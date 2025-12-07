@@ -56,10 +56,26 @@ jobs:
         with:
           name: static-ip-fix-${{ github.sha }}
 
+      - name: Make script executable
+        run: chmod +x .github/scripts/version-manager.sh
+
+      - name: Extract release notes from changelog
+        id: notes
+        run: |
+          VERSION="${{ github.ref_name }}"
+          NOTES=$(.github/scripts/version-manager.sh extract-notes "$VERSION")
+          # Write to file for the release action
+          echo "$NOTES" > release_notes.md
+          # Also output for debugging
+          echo "Release notes for $VERSION:"
+          echo "$NOTES"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # Tag that triggered this run: v1.2.3, v1.2.3-alpha.1, etc.
           tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes.md
           files: static-ip-fix.exe
-          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -1,0 +1,83 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent releases
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  changelog-and-release:
+    runs-on: ubuntu-latest
+
+    # Skip if commit was made by this workflow (prevents infinite loops)
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, 'chore(release):')"
+
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Use PAT for pushing (avoids bot attribution)
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0 # Full history for tag detection
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "notzenco"
+          git config user.email "64717583+notzenco@users.noreply.github.com"
+
+      - name: Make script executable
+        run: chmod +x .github/scripts/version-manager.sh
+
+      - name: Process commit and determine version
+        id: version
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          # Process the commit
+          .github/scripts/version-manager.sh process-push "$COMMIT_MSG" "${COMMIT_SHA:0:7}"
+
+      - name: Commit changelog updates
+        id: commit
+        run: |
+          if git diff --quiet CHANGELOG.md 2>/dev/null; then
+            echo "No changelog changes to commit"
+            echo "committed=false" >> $GITHUB_OUTPUT
+          else
+            git add CHANGELOG.md
+            if [[ "${{ steps.version.outputs.release }}" == "true" ]]; then
+              git commit -m "chore(release): ${{ steps.version.outputs.version }} [skip ci]"
+            else
+              git commit -m "chore(changelog): update upcoming [skip ci]"
+            fi
+            echo "committed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.version.outputs.release == 'true'
+        run: |
+          git tag "${{ steps.version.outputs.version }}"
+          git push origin main --tags
+
+      - name: Push changelog (no release)
+        if: steps.version.outputs.release != 'true' && steps.commit.outputs.committed == 'true'
+        run: |
+          git push origin main
+
+      # Note: GitHub Release with artifacts is handled by ci.yml when tag is pushed
+      - name: Summary
+        if: steps.version.outputs.release == 'true'
+        run: |
+          echo "## Release Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The CI workflow will build and create the GitHub Release with artifacts." >> $GITHUB_STEP_SUMMARY
