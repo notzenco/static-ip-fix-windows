@@ -2,6 +2,10 @@
 
 ## [Upcoming]
 
+## [v1.1.0] - 2025-12-07
+### Features
+- test release automation (d7124b6)
+
 ## [v1.0.2] - 2025-12-07
 ### Bug Fixes
 - version-manager.sh script (a6d15c4)
@@ -27,5 +31,6 @@
 - Unit tests for utility functions
 - Release script for automated versioning
 - GitHub Actions CI/CD workflow
+
 
 
