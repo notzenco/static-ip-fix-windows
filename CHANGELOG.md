@@ -2,10 +2,6 @@
 
 ## [Upcoming]
 
-## [v2.0.0] - 2025-12-07
-### Features
-- ⚠️ tui (62d53e7)
-
 ## [v1.1.0] - 2025-12-07
 ### Features
 - test release automation (d7124b6)
@@ -35,7 +31,6 @@
 - Unit tests for utility functions
 - Release script for automated versioning
 - GitHub Actions CI/CD workflow
-
 
 
 
