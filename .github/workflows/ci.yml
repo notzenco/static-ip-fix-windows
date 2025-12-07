@@ -55,6 +55,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: static-ip-fix-${{ github.sha }}
+          path: ./release-assets
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded files:"
+          ls -la ./release-assets/
 
       - name: Extract release notes from changelog
         id: notes
@@ -86,6 +92,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body_path: release_notes.md
-          files: static-ip-fix.exe
+          files: ./release-assets/static-ip-fix.exe
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
