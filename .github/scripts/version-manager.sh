@@ -28,6 +28,38 @@ parse_version() {
 }
 
 # -----------------------------------------------------------------------------
+# Conventional Commits 1.0.0 Specification
+# https://www.conventionalcommits.org/en/v1.0.0/
+#
+# Format: <type>[optional scope][!]: <description>
+#         [optional body]
+#         [optional footer(s)]
+#
+# Types that trigger releases:
+#   feat:     Minor version bump (new feature)
+#   fix:      Patch version bump (bug fix)
+#
+# Types that don't trigger releases (changelog only):
+#   build:    Build system or external dependencies
+#   chore:    Maintenance tasks
+#   ci:       CI configuration
+#   docs:     Documentation only
+#   style:    Code style (formatting, semicolons, etc.)
+#   refactor: Code refactoring (no feature/fix)
+#   perf:     Performance improvements
+#   test:     Adding or fixing tests
+#   revert:   Reverting previous commits
+#
+# Breaking changes (Major version bump):
+#   feat!:, fix!:, etc. (! before colon)
+#   BREAKING CHANGE: in footer
+#   BREAKING-CHANGE: in footer
+# -----------------------------------------------------------------------------
+
+# All valid conventional commit types
+COMMIT_TYPES="feat|fix|build|chore|ci|docs|style|refactor|perf|test|revert|security|deps"
+
+# -----------------------------------------------------------------------------
 # Analyze commit message for version bump type
 # Returns: major, minor, patch, or none
 # -----------------------------------------------------------------------------
@@ -35,7 +67,10 @@ analyze_commit() {
     local msg="$1"
 
     # Check for breaking changes (major bump)
-    if [[ "$msg" =~ ^[a-z]+\!: ]] || [[ "$msg" =~ BREAKING[[:space:]]CHANGE ]]; then
+    # Supports: type!:, type(scope)!:, BREAKING CHANGE:, BREAKING-CHANGE:
+    if [[ "$msg" =~ ^[a-z]+(\(.+\))?\!: ]] || \
+       [[ "$msg" =~ BREAKING[[:space:]]CHANGE: ]] || \
+       [[ "$msg" =~ BREAKING-CHANGE: ]]; then
         echo "major"
         return
     fi
@@ -52,8 +87,14 @@ analyze_commit() {
         return
     fi
 
+    # Check for perf (patch bump - performance is a type of fix)
+    if [[ "$msg" =~ ^perf(\(.+\))?: ]]; then
+        echo "patch"
+        return
+    fi
+
     # Other conventional commits (no version bump, but add to changelog)
-    if [[ "$msg" =~ ^(docs|test|chore|ci|refactor|perf|security|build|deps|style)(\(.+\))?: ]]; then
+    if [[ "$msg" =~ ^(build|chore|ci|docs|style|refactor|test|revert|security|deps)(\(.+\))?: ]]; then
         echo "none"
         return
     fi
@@ -101,33 +142,91 @@ calculate_new_version() {
 
 # -----------------------------------------------------------------------------
 # Classify a single commit and return formatted entry
+# Format: category|description|hash|scope|breaking
 # -----------------------------------------------------------------------------
 classify_commit() {
     local msg="$1"
     local hash="$2"
     local category=""
     local description=""
+    local scope=""
+    local breaking=""
 
-    if [[ "$msg" =~ ^feat(\(.+\))?!?:[[:space:]]*(.+) ]]; then
-        category="Features"
-        description="${BASH_REMATCH[2]}"
-    elif [[ "$msg" =~ ^fix(\(.+\))?!?:[[:space:]]*(.+) ]]; then
-        category="Bug Fixes"
-        description="${BASH_REMATCH[2]}"
-    elif [[ "$msg" =~ ^docs(\(.+\))?:[[:space:]]*(.+) ]]; then
-        category="Documentation"
-        description="${BASH_REMATCH[2]}"
-    elif [[ "$msg" =~ ^perf(\(.+\))?:[[:space:]]*(.+) ]]; then
-        category="Performance"
-        description="${BASH_REMATCH[2]}"
-    elif [[ "$msg" =~ ^security(\(.+\))?:[[:space:]]*(.+) ]]; then
-        category="Security"
-        description="${BASH_REMATCH[2]}"
-    elif [[ "$msg" =~ ^(chore|ci|refactor|test|build|deps|style)(\(.+\))?:[[:space:]]*(.+) ]]; then
-        category="Other Changes"
-        description="${BASH_REMATCH[3]}"
+    # Check for breaking change indicator
+    if [[ "$msg" =~ ^[a-z]+(\(.+\))?\!: ]] || \
+       [[ "$msg" =~ BREAKING[[:space:]]CHANGE: ]] || \
+       [[ "$msg" =~ BREAKING-CHANGE: ]]; then
+        breaking="!"
+    fi
+
+    # Extract scope if present: type(scope): or type(scope)!:
+    local scope_regex='^[a-z]+\(([^)]+)\)'
+    if [[ "$msg" =~ $scope_regex ]]; then
+        scope="${BASH_REMATCH[1]}"
+    fi
+
+    # Classify by type - extract description after the colon
+    local type_desc
+    local type_regex='^[a-z]+(\([^)]+\))?!?:[[:space:]]*(.+)'
+    if [[ "$msg" =~ $type_regex ]]; then
+        type_desc="${BASH_REMATCH[2]}"
     else
-        return 1  # Not a conventional commit
+        return 1
+    fi
+
+    # Determine category based on type prefix
+    case "$msg" in
+        feat\(*|feat:*|feat\!:*)
+            category="Features"
+            ;;
+        fix\(*|fix:*|fix\!:*)
+            category="Bug Fixes"
+            ;;
+        docs\(*|docs:*|docs\!:*)
+            category="Documentation"
+            ;;
+        perf\(*|perf:*|perf\!:*)
+            category="Performance"
+            ;;
+        security\(*|security:*|security\!:*)
+            category="Security"
+            ;;
+        refactor\(*|refactor:*|refactor\!:*)
+            category="Refactoring"
+            ;;
+        test\(*|test:*|test\!:*)
+            category="Tests"
+            ;;
+        build\(*|build:*|build\!:*)
+            category="Build System"
+            ;;
+        ci\(*|ci:*|ci\!:*)
+            category="CI/CD"
+            ;;
+        revert\(*|revert:*|revert\!:*)
+            category="Reverts"
+            ;;
+        style\(*|style:*|style\!:*)
+            category="Styles"
+            ;;
+        chore\(*|chore:*|chore\!:*|deps\(*|deps:*|deps\!:*)
+            category="Chores"
+            ;;
+        *)
+            return 1  # Not a conventional commit
+            ;;
+    esac
+
+    description="$type_desc"
+
+    # Format description with scope if present
+    if [[ -n "$scope" ]]; then
+        description="**${scope}:** ${description}"
+    fi
+
+    # Mark breaking changes
+    if [[ -n "$breaking" ]]; then
+        description="⚠️ ${description}"
     fi
 
     echo "${category}|${description}|${hash}"
@@ -228,7 +327,8 @@ add_to_upcoming() {
     local new_upcoming="## [Upcoming]"$'\n'
 
     # Preserve existing content structure, add new entries
-    for cat in "Features" "Bug Fixes" "Security" "Performance" "Documentation" "Other Changes"; do
+    # Order: Breaking → Features → Fixes → Security → Performance → Refactoring → Docs → Tests → Build → CI → Styles → Chores → Reverts
+    for cat in "Features" "Bug Fixes" "Security" "Performance" "Refactoring" "Documentation" "Tests" "Build System" "CI/CD" "Styles" "Chores" "Reverts"; do
         local existing_cat=""
         local new_cat="${categories[$cat]:-}"
 
