@@ -2,10 +2,6 @@
 
 ## [Upcoming]
 
-## [v2.0.1] - 2025-12-07
-### Bug Fixes
-- ci workflows (0416e3a)
-
 ## [v2.0.0] - 2025-12-07
 ### Features
 - ⚠️ tui (62d53e7)
@@ -39,7 +35,6 @@
 - Unit tests for utility functions
 - Release script for automated versioning
 - GitHub Actions CI/CD workflow
-
 
 
 
