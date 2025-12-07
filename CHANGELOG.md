@@ -2,6 +2,13 @@
 
 ## [Upcoming]
 
+<<<<<<< HEAD
+=======
+## [v1.1.0] - 2025-12-07
+### Features
+- test release automation (d7124b6)
+
+>>>>>>> parent of e1d1801 (chore(release): v2.0.0 [skip ci])
 ## [v1.0.2] - 2025-12-07
 ### Bug Fixes
 - version-manager.sh script (a6d15c4)
@@ -29,3 +36,7 @@
 - GitHub Actions CI/CD workflow
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> parent of e1d1801 (chore(release): v2.0.0 [skip ci])
