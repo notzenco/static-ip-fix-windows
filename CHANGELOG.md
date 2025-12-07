@@ -2,6 +2,10 @@
 
 ## [Upcoming]
 
+## [v1.0.2] - 2025-12-07
+### Bug Fixes
+- version-manager.sh script (a6d15c4)
+
 ## [v1.0.1] - 2025-12-07
 ### Bug Fixes
 - move confirmation before changelog update, add -y flag (0e34a03)
@@ -23,4 +27,5 @@
 - Unit tests for utility functions
 - Release script for automated versioning
 - GitHub Actions CI/CD workflow
+
 
